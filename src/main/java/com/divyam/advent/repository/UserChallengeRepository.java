@@ -5,12 +5,14 @@ import com.divyam.advent.enums.CompletionStatus;
 import com.divyam.advent.enums.Mood;
 import com.divyam.advent.model.UserChallenge;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repository interface for UserChallenge entity.
@@ -18,6 +20,12 @@ import java.util.List;
  */
 @Repository
 public interface UserChallengeRepository extends JpaRepository<UserChallenge, Long> {
+
+    interface CategoryCountProjection {
+        ChallengeCategory getCategory();
+
+        long getCount();
+    }
 
     /**
      * Find all challenges for a specific user.
@@ -42,6 +50,34 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
      */
     List<UserChallenge> findByUser_IdAndStatus(Long userId, CompletionStatus status);
 
+    @Query("SELECT COUNT(uc) FROM UserChallenge uc WHERE uc.user.id = :userId " +
+           "AND uc.startTime BETWEEN :start AND :end")
+    long countAssignedInRange(
+            @Param("userId") Long userId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
+
+    @Query("SELECT COUNT(uc) FROM UserChallenge uc WHERE uc.user.id = :userId " +
+           "AND uc.status = 'COMPLETED' " +
+           "AND uc.completionTime BETWEEN :start AND :end")
+    long countCompletedInRange(
+            @Param("userId") Long userId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
+
+    @Query("SELECT uc.challenge.category AS category, COUNT(uc) AS count FROM UserChallenge uc " +
+           "WHERE uc.user.id = :userId " +
+           "AND uc.status = 'COMPLETED' " +
+           "AND uc.completionTime BETWEEN :start AND :end " +
+           "GROUP BY uc.challenge.category")
+    List<CategoryCountProjection> countCompletedByCategoryInRange(
+            @Param("userId") Long userId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
+
     /**
      * Check if a user is already participating in a specific challenge.
      * Useful to prevent duplicate sign-ups.
@@ -50,6 +86,15 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
      * @return true if user is already doing this challenge, false otherwise
      */
     boolean existsByUser_IdAndChallenge_Id(Long userId, Long challengeId);
+
+    /**
+     * Find a specific UserChallenge by user and challenge IDs.
+     * Useful for idempotent joins and confirmations.
+     * @param userId the ID of the user
+     * @param challengeId the ID of the challenge
+     * @return matching UserChallenge if it exists
+     */
+    Optional<UserChallenge> findByUser_IdAndChallenge_Id(Long userId, Long challengeId);
 
     /**
      * Count total challenges assigned to a user.
@@ -120,6 +165,24 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
             @Param("afterDate") LocalDateTime afterDate
     );
 
+    /**
+     * Find all challenges for a user after a given date with a specific status.
+     * Useful for fetching only today's active (ASSIGNED) rows.
+     *
+     * @param userId the ID of the user
+     * @param afterDate date threshold (typically today's start)
+     * @param status the target status
+     * @return list of matching UserChallenges
+     */
+    @Query("SELECT uc FROM UserChallenge uc WHERE uc.user.id = :userId " +
+           "AND uc.startTime >= :afterDate " +
+           "AND uc.status = :status")
+    List<UserChallenge> findByUser_IdAndStartTimeAfterAndStatus(
+            @Param("userId") Long userId,
+            @Param("afterDate") LocalDateTime afterDate,
+            @Param("status") CompletionStatus status
+    );
+
     // ==================== ANALYTICS / PULSE QUERIES ====================
     // All queries below are for the Global Student Pulse feature.
     // They use efficient COUNT aggregation at the database level.
@@ -183,4 +246,62 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
            "WHERE uc.mood = 'HIGH' " +
            "AND uc.startTime BETWEEN :start AND :end")
     long countHighMoodToday(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
+     * Delete all pending (ASSIGNED status) challenges for a specific user.
+     * This is used when a user wants to clear their pending challenges queue.
+     * Requires @Modifying annotation for delete operations.
+     *
+     * @param userId the ID of the user
+     * @param status the status to filter (typically ASSIGNED)
+     * @return the number of deleted challenges
+     */
+    @Modifying
+    long deleteByUser_IdAndStatus(Long userId, CompletionStatus status);
+
+    /**
+     * Find a UserChallenge by user, challenge, and assigned date.
+     * Used for idempotent challenge start - check if user already has this challenge today.
+     *
+     * @param userId the ID of the user
+     * @param challengeId the ID of the challenge
+     * @param startOfToday start of today (for filtering today's challenges)
+     * @return matching UserChallenge if exists
+     */
+    @Query("SELECT uc FROM UserChallenge uc WHERE uc.user.id = :userId " +
+           "AND uc.challenge.id = :challengeId " +
+           "AND uc.startTime >= :startOfToday")
+    Optional<UserChallenge> findByUser_IdAndChallenge_IdAndStartTimeAfter(
+            @Param("userId") Long userId,
+            @Param("challengeId") Long challengeId,
+            @Param("startOfToday") LocalDateTime startOfToday
+    );
+
+    /**
+     * Find today's challenge for a user/challenge pair with a specific status.
+     * Used to keep start operation idempotent only for active rows.
+     *
+     * @param userId the ID of the user
+     * @param challengeId the ID of the challenge
+     * @param startOfToday today's start threshold
+     * @param status the target status
+     * @return matching UserChallenge if exists
+     */
+    @Query("SELECT uc FROM UserChallenge uc WHERE uc.user.id = :userId " +
+           "AND uc.challenge.id = :challengeId " +
+           "AND uc.startTime >= :startOfToday " +
+           "AND uc.status = :status")
+    Optional<UserChallenge> findByUser_IdAndChallenge_IdAndStartTimeAfterAndStatus(
+            @Param("userId") Long userId,
+            @Param("challengeId") Long challengeId,
+            @Param("startOfToday") LocalDateTime startOfToday,
+            @Param("status") CompletionStatus status
+    );
+
+    @Query("SELECT uc.completionTime FROM UserChallenge uc " +
+           "WHERE uc.user.id = :userId " +
+           "AND uc.status = 'COMPLETED' " +
+           "AND uc.completionTime IS NOT NULL " +
+           "ORDER BY uc.completionTime DESC")
+    List<LocalDateTime> findCompletionTimesDesc(@Param("userId") Long userId);
 }

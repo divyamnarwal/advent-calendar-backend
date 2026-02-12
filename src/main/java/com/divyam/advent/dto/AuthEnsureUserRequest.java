@@ -4,7 +4,7 @@ import com.divyam.advent.enums.Culture;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
-public class UserRequestDto {
+public class AuthEnsureUserRequest {
 
     @NotBlank(message = "Name is required")
     private String name;
@@ -15,12 +15,13 @@ public class UserRequestDto {
 
     private Culture country = Culture.GLOBAL;
 
-    public UserRequestDto() {
+    public AuthEnsureUserRequest() {
     }
 
-    public UserRequestDto(String name, String email) {
+    public AuthEnsureUserRequest(String name, String email, Culture country) {
         this.name = name;
         this.email = email;
+        this.country = country;
     }
 
     public String getName() {

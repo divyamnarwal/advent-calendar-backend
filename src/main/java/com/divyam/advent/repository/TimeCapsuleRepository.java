@@ -48,4 +48,16 @@ public interface TimeCapsuleRepository extends JpaRepository<TimeCapsule, Long> 
            "AND tc.revealDate > :now " +
            "ORDER BY tc.revealDate ASC")
     List<TimeCapsule> findPendingCapsules(@Param("userId") Long userId, @Param("now") LocalDateTime now);
+
+    long countByUserIdAndCreatedAtBetween(Long userId, LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT COUNT(tc) FROM TimeCapsule tc WHERE tc.userId = :userId " +
+           "AND tc.revealDate BETWEEN :start AND :end " +
+           "AND tc.revealDate <= :now")
+    long countUnlockedInRange(
+            @Param("userId") Long userId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end,
+            @Param("now") LocalDateTime now
+    );
 }

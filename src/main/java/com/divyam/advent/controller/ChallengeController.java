@@ -5,10 +5,13 @@ import com.divyam.advent.enums.ChallengeCategory;
 import com.divyam.advent.enums.Mood;
 import com.divyam.advent.model.Challenge;
 import com.divyam.advent.model.UserChallenge;
+import com.divyam.advent.service.AuthService;
 import com.divyam.advent.service.ChallengeService;
 import com.divyam.advent.service.UserChallengeService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,10 +22,16 @@ public class ChallengeController {
 
     private final ChallengeService challengeService;
     private final UserChallengeService userChallengeService;
+    private final AuthService authService;
 
-    public ChallengeController(ChallengeService challengeService, UserChallengeService userChallengeService) {
+    public ChallengeController(
+            ChallengeService challengeService,
+            UserChallengeService userChallengeService,
+            AuthService authService
+    ) {
         this.challengeService = challengeService;
         this.userChallengeService = userChallengeService;
+        this.authService = authService;
     }
 
     @PostMapping
@@ -62,9 +71,25 @@ public class ChallengeController {
      */
     @GetMapping("/today")
     public ResponseEntity<UserChallenge> getTodaysChallenge(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam Long userId,
             @RequestParam Mood mood) {
+        authService.validateUserAccess(jwt, userId);
         UserChallenge userChallenge = userChallengeService.getOrAssignDailyChallenge(userId, mood);
         return ResponseEntity.ok(userChallenge);
+    }
+
+    /**
+     * Preview today's challenge without assigning it.
+     * GET /challenges/today/preview?userId=1&mood=LOW
+     */
+    @GetMapping("/today/preview")
+    public ResponseEntity<Challenge> previewTodaysChallenge(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam Long userId,
+            @RequestParam Mood mood) {
+        authService.validateUserAccess(jwt, userId);
+        Challenge challenge = userChallengeService.previewDailyChallenge(userId, mood);
+        return ResponseEntity.ok(challenge);
     }
 }

@@ -36,3 +36,6 @@ build/
 tmpclaude-*/
 nul
 query
+
+# Local environment secrets
+.env

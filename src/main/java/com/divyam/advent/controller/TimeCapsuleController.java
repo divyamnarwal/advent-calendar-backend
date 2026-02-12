@@ -2,10 +2,13 @@ package com.divyam.advent.controller;
 
 import com.divyam.advent.dto.TimeCapsuleRequestDto;
 import com.divyam.advent.dto.TimeCapsuleResponseDto;
+import com.divyam.advent.service.AuthService;
 import com.divyam.advent.service.TimeCapsuleService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,10 +22,12 @@ import java.util.List;
 public class TimeCapsuleController {
 
     private final TimeCapsuleService timeCapsuleService;
+    private final AuthService authService;
 
     @Autowired
-    public TimeCapsuleController(TimeCapsuleService timeCapsuleService) {
+    public TimeCapsuleController(TimeCapsuleService timeCapsuleService, AuthService authService) {
         this.timeCapsuleService = timeCapsuleService;
+        this.authService = authService;
     }
 
     /**
@@ -50,8 +55,10 @@ public class TimeCapsuleController {
      */
     @PostMapping
     public ResponseEntity<TimeCapsuleResponseDto> createCapsule(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam Long userId,
             @RequestBody TimeCapsuleRequestDto request) {
+        authService.validateUserAccess(jwt, userId);
         TimeCapsuleResponseDto capsule = timeCapsuleService.createCapsule(userId, request);
         return new ResponseEntity<>(capsule, HttpStatus.CREATED);
     }
@@ -67,7 +74,9 @@ public class TimeCapsuleController {
      */
     @GetMapping("/revealed")
     public ResponseEntity<List<TimeCapsuleResponseDto>> getRevealedCapsules(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam Long userId) {
+        authService.validateUserAccess(jwt, userId);
         List<TimeCapsuleResponseDto> capsules = timeCapsuleService.getRevealedCapsules(userId);
         return ResponseEntity.ok(capsules);
     }
@@ -84,7 +93,9 @@ public class TimeCapsuleController {
      */
     @GetMapping("/pending")
     public ResponseEntity<List<TimeCapsuleResponseDto>> getPendingCapsules(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam Long userId) {
+        authService.validateUserAccess(jwt, userId);
         List<TimeCapsuleResponseDto> capsules = timeCapsuleService.getPendingCapsules(userId);
         return ResponseEntity.ok(capsules);
     }

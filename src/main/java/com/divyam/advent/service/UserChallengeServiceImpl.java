@@ -15,11 +15,14 @@ import com.divyam.advent.repository.UserChallengeRepository;
 import com.divyam.advent.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Implementation of UserChallengeService.
@@ -31,14 +34,21 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     private final UserChallengeRepository userChallengeRepository;
     private final UserRepository userRepository;
     private final ChallengeRepository challengeRepository;
+    private final BadgeService badgeService;
+    private final ConcurrentHashMap<PreviewKey, Challenge> previewCache = new ConcurrentHashMap<>();
+
+    private record PreviewKey(Long userId, LocalDate date, Mood mood) {
+    }
 
     @Autowired
     public UserChallengeServiceImpl(UserChallengeRepository userChallengeRepository,
                                      UserRepository userRepository,
-                                     ChallengeRepository challengeRepository) {
+                                     ChallengeRepository challengeRepository,
+                                     BadgeService badgeService) {
         this.userChallengeRepository = userChallengeRepository;
         this.userRepository = userRepository;
         this.challengeRepository = challengeRepository;
+        this.badgeService = badgeService;
     }
 
     @Override
@@ -51,9 +61,12 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge not found with id: " + challengeId));
 
-        // Check if user is already registered for this challenge
-        if (userChallengeRepository.existsByUser_IdAndChallenge_Id(userId, challengeId)) {
-            throw new IllegalArgumentException("User is already participating in this challenge");
+        // Idempotent join: if user already has this challenge, return existing row
+        UserChallenge existing = userChallengeRepository
+                .findByUser_IdAndChallenge_Id(userId, challengeId)
+                .orElse(null);
+        if (existing != null) {
+            return existing;
         }
 
         // Create new UserChallenge with ASSIGNED status
@@ -107,8 +120,10 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         userChallenge.setStatus(CompletionStatus.COMPLETED);
         userChallenge.setCompletionTime(LocalDateTime.now());
 
-        // 4. Save and return the updated entity
-        return userChallengeRepository.save(userChallenge);
+        // 4. Save and refresh badge/stats state
+        UserChallenge saved = userChallengeRepository.save(userChallenge);
+        badgeService.evaluateAndAssignBadges(saved.getUser());
+        return saved;
     }
 
     @Override
@@ -116,12 +131,16 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         UserChallenge userChallenge = getUserChallengeById(id);
         userChallenge.setStatus(status);
 
-        // If marking as completed, set completion time
+        // If marking as completed, set completion time and refresh badges
         if (status == CompletionStatus.COMPLETED) {
             userChallenge.setCompletionTime(LocalDateTime.now());
         }
 
-        return userChallengeRepository.save(userChallenge);
+        UserChallenge saved = userChallengeRepository.save(userChallenge);
+        if (status == CompletionStatus.COMPLETED) {
+            badgeService.evaluateAndAssignBadges(saved.getUser());
+        }
+        return saved;
     }
 
     @Override
@@ -154,6 +173,74 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     }
 
     @Override
+    public Challenge previewDailyChallenge(Long userId, Mood mood) {
+        if (userId == null || mood == null) {
+            throw new IllegalArgumentException("userId and mood are required");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+
+        LocalDate today = LocalDate.now();
+        LocalDateTime startOfToday = today.atStartOfDay();
+
+        List<UserChallenge> existingToday = userChallengeRepository
+                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+
+        if (!existingToday.isEmpty()) {
+            return existingToday.get(0).getChallenge();
+        }
+
+        PreviewKey key = new PreviewKey(userId, today, mood);
+        Challenge cached = previewCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
+        Challenge selected = selectDailyChallenge(user, mood);
+        previewCache.put(key, selected);
+        return selected;
+    }
+
+    @Override
+    public UserChallenge confirmDailyChallenge(Long userId, Long challengeId, Mood mood) {
+        if (userId == null || challengeId == null || mood == null) {
+            throw new IllegalArgumentException("userId, challengeId, and mood are required");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+
+        LocalDate today = LocalDate.now();
+        LocalDateTime startOfToday = today.atStartOfDay();
+
+        List<UserChallenge> existingToday = userChallengeRepository
+                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+
+        if (!existingToday.isEmpty()) {
+            UserChallenge existing = existingToday.get(0);
+            existing.setMood(mood);
+            return userChallengeRepository.save(existing);
+        }
+
+        PreviewKey key = new PreviewKey(userId, today, mood);
+        Challenge expected = previewCache.get(key);
+        if (expected == null) {
+            expected = selectDailyChallenge(user, mood);
+        }
+
+        if (expected.getId() == null || !expected.getId().equals(challengeId)) {
+            throw new IllegalArgumentException("Preview mismatch or expired. Please preview again.");
+        }
+
+        UserChallenge userChallenge = new UserChallenge(user, expected, CompletionStatus.ASSIGNED);
+        userChallenge.setMood(mood);
+        UserChallenge saved = userChallengeRepository.save(userChallenge);
+        previewCache.remove(key);
+        return saved;
+    }
+
+    @Override
     public UserChallenge getOrAssignDailyChallenge(Long userId) {
         // 1. Validate user exists
         User user = userRepository.findById(userId)
@@ -165,7 +252,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
 
         // 3. Check if user already has a challenge assigned today
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
+                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
 
         if (!existingToday.isEmpty()) {
             return existingToday.get(0);  // Already has today's challenge - return it
@@ -212,7 +299,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
 
         // 3. Check if user already has a challenge assigned today
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
+                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
 
         if (!existingToday.isEmpty()) {
             // Update mood on existing challenge and return
@@ -221,59 +308,54 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             return userChallengeRepository.save(existing);
         }
 
-        // 4. Get yesterday's challenge to determine its category (for avoidance)
-        ChallengeCategory yesterdayCategory = getYesterdayCategory(userId, startOfToday);
+        // 4. Select a challenge using the shared selection logic
+        Challenge selectedChallenge = selectDailyChallenge(user, mood);
 
-        // 5. Map mood to energy level
-        // LOW mood → LOW energy (easy, achievable)
-        // NEUTRAL mood → MEDIUM energy (balanced)
-        // HIGH mood → HIGH energy (exciting, ambitious)
+        // 5. Assign with mood and save
+        UserChallenge userChallenge = new UserChallenge(user, selectedChallenge, CompletionStatus.ASSIGNED);
+        userChallenge.setMood(mood);
+        return userChallengeRepository.save(userChallenge);
+    }
+
+    /**
+     * Selects a daily challenge for a user based on mood, culture, and rotation rules.
+     */
+    private Challenge selectDailyChallenge(User user, Mood mood) {
+        LocalDate today = LocalDate.now();
+        LocalDateTime startOfToday = today.atStartOfDay();
+
+        ChallengeCategory yesterdayCategory = getYesterdayCategory(user.getId(), startOfToday);
+
         EnergyLevel targetEnergyLevel = mapMoodToEnergyLevel(mood);
-
-        // 6. Get active challenges matching the energy level
         List<Challenge> moodMatchingChallenges = challengeRepository
                 .findByEnergyLevelAndActiveTrue(targetEnergyLevel);
 
-        // 6.5. Filter by culture (user's country OR GLOBAL, or cross-cultural every N days)
         Culture userCountry = user.getCountry();
-        boolean isCrossCulturalDay = isCrossCulturalDay(userId);
+        boolean isCrossCulturalDay = isCrossCulturalDay(user.getId());
         List<Challenge> cultureMatchingChallenges = filterByCulture(
                 moodMatchingChallenges, userCountry, isCrossCulturalDay
         );
 
-        // 7. Filter out yesterday's category to avoid repetition
         List<Challenge> availableChallenges = filterOutCategory(cultureMatchingChallenges, yesterdayCategory);
 
-        // 8. Fallback 1: if no challenges after filtering, use all culture-matching challenges
         if (availableChallenges.isEmpty()) {
             availableChallenges = cultureMatchingChallenges;
         }
 
-        // 9. Fallback 2: if still no challenges, use all mood-matching challenges
         if (availableChallenges.isEmpty()) {
             availableChallenges = moodMatchingChallenges;
         }
 
-        // 10. Fallback 3: if still no challenges, use all active challenges
         if (availableChallenges.isEmpty()) {
             availableChallenges = challengeRepository.findByActiveTrue();
         }
 
-        // 11. Final fallback: if nothing available, throw exception
         if (availableChallenges.isEmpty()) {
             throw new IllegalStateException("No active challenges available");
         }
 
-        // 12. Randomly select one
         Random random = new Random();
-        Challenge selectedChallenge = availableChallenges.get(
-                random.nextInt(availableChallenges.size())
-        );
-
-        // 13. Assign with mood and save
-        UserChallenge userChallenge = new UserChallenge(user, selectedChallenge, CompletionStatus.ASSIGNED);
-        userChallenge.setMood(mood);
-        return userChallengeRepository.save(userChallenge);
+        return availableChallenges.get(random.nextInt(availableChallenges.size()));
     }
 
     /**
@@ -392,5 +474,63 @@ public class UserChallengeServiceImpl implements UserChallengeService {
 
         // Normal day: use user's country, default to GLOBAL if not set
         return userCountry != null ? userCountry : Culture.GLOBAL;
+    }
+
+    @Override
+    @Transactional
+    public long clearPendingChallenges(Long userId) {
+        // Verify user exists
+        if (!userRepository.existsById(userId)) {
+            throw new ResourceNotFoundException("User not found with id: " + userId);
+        }
+
+        // Delete all challenges with ASSIGNED status for this user
+        // COMPLETED challenges are preserved
+        long deletedCount = userChallengeRepository.deleteByUser_IdAndStatus(
+                userId, CompletionStatus.ASSIGNED
+        );
+
+        return deletedCount;
+    }
+
+    @Override
+    @Transactional
+    public UserChallenge startChallenge(Long userId, Long challengeId, Mood mood) {
+        // Validate inputs
+        if (userId == null || challengeId == null || mood == null) {
+            throw new IllegalArgumentException("userId, challengeId, and mood are required");
+        }
+
+        // Check if user exists
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
+
+        // Check if challenge exists
+        Challenge challenge = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Challenge not found with id: " + challengeId));
+
+        // Check if user already has this challenge assigned for today
+        LocalDate today = LocalDate.now();
+        LocalDateTime startOfToday = today.atStartOfDay();
+
+        Optional<UserChallenge> existing = userChallengeRepository
+                .findByUser_IdAndChallenge_IdAndStartTimeAfterAndStatus(
+                        userId,
+                        challengeId,
+                        startOfToday,
+                        CompletionStatus.ASSIGNED
+                );
+
+        if (existing.isPresent()) {
+            // Idempotent - return existing challenge
+            return existing.get();
+        }
+
+        // Create new UserChallenge with explicit start time
+        UserChallenge userChallenge = new UserChallenge(user, challenge, CompletionStatus.ASSIGNED);
+        userChallenge.setMood(mood);
+        userChallenge.setStartTime(LocalDateTime.now()); // EXPLICIT START TIMESTAMP
+
+        return userChallengeRepository.save(userChallenge);
     }
 }

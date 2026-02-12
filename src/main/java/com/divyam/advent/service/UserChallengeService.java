@@ -3,6 +3,7 @@ package com.divyam.advent.service;
 import com.divyam.advent.dto.UserProgressDto;
 import com.divyam.advent.enums.CompletionStatus;
 import com.divyam.advent.enums.Mood;
+import com.divyam.advent.model.Challenge;
 import com.divyam.advent.model.UserChallenge;
 
 import java.util.List;
@@ -96,4 +97,43 @@ public interface UserChallengeService {
      * @return the UserChallenge for today's daily challenge
      */
     UserChallenge getOrAssignDailyChallenge(Long userId, Mood mood);
+
+    /**
+     * Preview today's daily challenge for a user without assigning it.
+     * @param userId the ID of the user
+     * @param mood the user's current mood
+     * @return the Challenge preview for today
+     */
+    Challenge previewDailyChallenge(Long userId, Mood mood);
+
+    /**
+     * Confirm today's daily challenge assignment after preview.
+     * @param userId the ID of the user
+     * @param challengeId the ID of the challenge to confirm
+     * @param mood the user's current mood
+     * @return the assigned UserChallenge
+     */
+    UserChallenge confirmDailyChallenge(Long userId, Long challengeId, Mood mood);
+
+    /**
+     * Clear all pending (ASSIGNED status) challenges for a user.
+     * This allows users to reset their challenge queue and start fresh.
+     * Only challenges with ASSIGNED status are deleted; COMPLETED challenges are preserved.
+     *
+     * @param userId the ID of the user
+     * @return the number of pending challenges cleared
+     */
+    long clearPendingChallenges(Long userId);
+
+    /**
+     * Start a specific challenge when user explicitly clicks "Start Challenge".
+     * Creates a UserChallenge with explicit startTime timestamp.
+     * If user already has this challenge assigned for today, returns existing (idempotent).
+     *
+     * @param userId the ID of the user
+     * @param challengeId the ID of the challenge to start
+     * @param mood the user's selected mood (LOW, NEUTRAL, HIGH)
+     * @return the created or existing UserChallenge
+     */
+    UserChallenge startChallenge(Long userId, Long challengeId, Mood mood);
 }
