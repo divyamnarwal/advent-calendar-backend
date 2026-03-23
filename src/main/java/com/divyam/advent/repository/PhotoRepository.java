@@ -25,5 +25,10 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
 
     long countByUserIdAndCreatedAtBetween(Long userId, LocalDateTime start, LocalDateTime end);
 
+    List<Photo> findByCreatedAtBetweenAndPublicIdIsNotNull(
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
     Optional<Photo> findByIdAndUserId(Long id, Long userId);
 }

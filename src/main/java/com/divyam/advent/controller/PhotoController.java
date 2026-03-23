@@ -68,6 +68,13 @@ public class PhotoController {
         return ResponseEntity.ok(photos);
     }
 
+    @GetMapping("/limit-status")
+    public ResponseEntity<PhotoService.PhotoLimitStatusResponse> getMonthlyLimitStatus(
+            @RequestParam Long userId
+    ) {
+        return ResponseEntity.ok(photoService.getMonthlyLimitStatus(userId));
+    }
+
     @DeleteMapping("/{photoId}")
     public ResponseEntity<Void> deletePhoto(
             @AuthenticationPrincipal Jwt jwt,

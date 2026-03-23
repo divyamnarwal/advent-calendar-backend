@@ -3,6 +3,7 @@ package com.divyam.advent.service;
 import com.divyam.advent.dto.PhotoCreateRequest;
 import com.divyam.advent.dto.PhotoResponseDto;
 import com.divyam.advent.dto.PhotoUploadSignatureResponse;
+import com.divyam.advent.exception.PhotoLimitExceededException;
 import com.divyam.advent.exception.ResourceNotFoundException;
 import com.divyam.advent.model.Photo;
 import com.divyam.advent.repository.PhotoRepository;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.YearMonth;
 import java.util.HexFormat;
 import java.util.List;
@@ -21,6 +23,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class PhotoServiceImpl implements PhotoService {
+
+    private static final int MONTHLY_PHOTO_LIMIT = 30;
 
     private final PhotoRepository photoRepository;
     private final UserRepository userRepository;
@@ -65,6 +69,7 @@ public class PhotoServiceImpl implements PhotoService {
 
     @Override
     public PhotoResponseDto createPhoto(Long userId, PhotoCreateRequest request) {
+        checkMonthlyLimit(userId);
         validateUser(userId);
 
         if (request == null) {
@@ -106,6 +111,17 @@ public class PhotoServiceImpl implements PhotoService {
     }
 
     @Override
+    public PhotoLimitStatusResponse getMonthlyLimitStatus(Long userId) {
+        validateUser(userId);
+
+        long currentCount = getCurrentMonthPhotoCount(userId);
+        int used = Math.toIntExact(currentCount);
+        int remaining = Math.max(0, MONTHLY_PHOTO_LIMIT - used);
+
+        return new PhotoLimitStatusResponse(used, remaining, MONTHLY_PHOTO_LIMIT);
+    }
+
+    @Override
     public void deletePhoto(Long userId, Long photoId) {
         validateUser(userId);
         Photo photo = photoRepository.findByIdAndUserId(photoId, userId)
@@ -120,6 +136,25 @@ public class PhotoServiceImpl implements PhotoService {
         if (!userRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
+    }
+
+    private void checkMonthlyLimit(Long userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId is required");
+        }
+
+        long currentCount = getCurrentMonthPhotoCount(userId);
+        if (currentCount >= MONTHLY_PHOTO_LIMIT) {
+            throw new PhotoLimitExceededException(currentCount, MONTHLY_PHOTO_LIMIT);
+        }
+    }
+
+    private long getCurrentMonthPhotoCount(Long userId) {
+        YearMonth currentMonth = YearMonth.from(LocalDateTime.now(ZoneId.systemDefault()));
+        LocalDateTime monthStart = currentMonth.atDay(1).atStartOfDay();
+        LocalDateTime monthEnd = currentMonth.plusMonths(1).atDay(1).atStartOfDay().minusNanos(1);
+
+        return photoRepository.countByUserIdAndCreatedAtBetween(userId, monthStart, monthEnd);
     }
 
     private void ensureCloudinaryConfigured() {

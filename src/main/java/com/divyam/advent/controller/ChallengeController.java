@@ -8,6 +8,7 @@ import com.divyam.advent.model.UserChallenge;
 import com.divyam.advent.service.AuthService;
 import com.divyam.advent.service.ChallengeService;
 import com.divyam.advent.service.UserChallengeService;
+import com.divyam.advent.security.AdminGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,19 +24,26 @@ public class ChallengeController {
     private final ChallengeService challengeService;
     private final UserChallengeService userChallengeService;
     private final AuthService authService;
+    private final AdminGuard adminGuard;
 
     public ChallengeController(
             ChallengeService challengeService,
             UserChallengeService userChallengeService,
-            AuthService authService
+            AuthService authService,
+            AdminGuard adminGuard
     ) {
         this.challengeService = challengeService;
         this.userChallengeService = userChallengeService;
         this.authService = authService;
+        this.adminGuard = adminGuard;
     }
 
     @PostMapping
-    public ResponseEntity<Challenge> createChallenge(@RequestBody Challenge challenge) {
+    public ResponseEntity<Challenge> createChallenge(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestBody Challenge challenge
+    ) {
+        adminGuard.requireAdmin(getClerkUserId(jwt));
         Challenge createdChallenge = challengeService.createChallenge(challenge);
         return new ResponseEntity<>(createdChallenge, HttpStatus.CREATED);
     }
@@ -91,5 +99,12 @@ public class ChallengeController {
         authService.validateUserAccess(jwt, userId);
         Challenge challenge = userChallengeService.previewDailyChallenge(userId, mood);
         return ResponseEntity.ok(challenge);
+    }
+
+    private String getClerkUserId(Jwt jwt) {
+        if (jwt == null || jwt.getSubject() == null || jwt.getSubject().trim().isEmpty()) {
+            throw new org.springframework.security.access.AccessDeniedException("Invalid authentication token");
+        }
+        return jwt.getSubject().trim();
     }
 }

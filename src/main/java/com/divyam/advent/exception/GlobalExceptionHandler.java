@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.format.DateTimeParseException;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -118,12 +120,22 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Object> handleAccessDeniedException(AccessDeniedException ex) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("timestamp", LocalDateTime.now().toString());
-        body.put("status", HttpStatus.FORBIDDEN.value());
-        body.put("error", "Forbidden");
-        body.put("message", ex.getMessage());
+        body.put("error", "FORBIDDEN");
+        body.put("message", "Admin access required");
+        body.put("timestamp", Instant.now(Clock.systemUTC()).toString());
 
         return new ResponseEntity<>(body, HttpStatus.FORBIDDEN);
+    }
+
+    @ExceptionHandler(PhotoLimitExceededException.class)
+    public ResponseEntity<Object> handlePhotoLimitExceededException(PhotoLimitExceededException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", "PHOTO_LIMIT_EXCEEDED");
+        body.put("message", ex.getMessage());
+        body.put("limit", ex.getCap());
+        body.put("timestamp", LocalDateTime.now(Clock.systemUTC()).toString() + "Z");
+
+        return new ResponseEntity<>(body, HttpStatus.TOO_MANY_REQUESTS);
     }
 
     @ExceptionHandler(Exception.class)

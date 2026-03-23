@@ -12,13 +12,14 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
-import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/users")
 public class UserController {
+
+    public record ParticipantView(Long id, String name, String initials, String culture) {
+    }
 
     private final UserService userService;
     private final AuthService authService;
@@ -50,17 +51,44 @@ public class UserController {
     @GetMapping
     public ResponseEntity<List<UserResponseDto>> getAllUsers(@AuthenticationPrincipal Jwt jwt) {
         User currentUser = authService.getCurrentUser(jwt);
-        List<User> users = Collections.singletonList(currentUser);
-        List<UserResponseDto> responseDtos = users.stream()
-                .map(this::convertToResponseDto)
-                .collect(Collectors.toList());
+        List<UserResponseDto> responseDtos = List.of(convertToResponseDto(currentUser));
         return new ResponseEntity<>(responseDtos, HttpStatus.OK);
+    }
+
+    @GetMapping("/participants")
+    public ResponseEntity<List<ParticipantView>> getParticipants(@AuthenticationPrincipal Jwt jwt) {
+        authService.getCurrentUser(jwt);
+
+        List<ParticipantView> participants = userService.getAllUsers().stream()
+                .map(user -> new ParticipantView(
+                        user.getId(),
+                        user.getName(),
+                        buildInitials(user.getName()),
+                        user.getCountry() != null ? user.getCountry().name() : ""
+                ))
+                .toList();
+
+        return new ResponseEntity<>(participants, HttpStatus.OK);
     }
 
     private User convertToUser(UserRequestDto dto) {
         User user = new User(null, dto.getName(), dto.getEmail());
         user.setCountry(dto.getCountry());
         return user;
+    }
+
+    private String buildInitials(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return "?";
+        }
+
+        String initials = java.util.Arrays.stream(name.trim().split("\\s+"))
+                .filter(part -> !part.isBlank())
+                .map(part -> part.substring(0, 1).toUpperCase())
+                .limit(2)
+                .reduce("", String::concat);
+
+        return initials.isEmpty() ? "?" : initials;
     }
 
     private UserResponseDto convertToResponseDto(User user) {
