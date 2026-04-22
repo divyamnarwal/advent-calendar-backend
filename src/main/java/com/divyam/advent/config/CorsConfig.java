@@ -26,7 +26,9 @@ public class CorsConfig {
                 .map(String::trim)
                 .filter(origin -> !origin.isEmpty())
                 .collect(Collectors.toList());
-        config.setAllowedOrigins(origins);
+        // Use origin patterns so exact domains keep working and Vercel preview domains
+        // can be allowed safely via values like https://advent-calendar-frontend-*.vercel.app.
+        config.setAllowedOriginPatterns(origins);
         config.addAllowedHeader("*");         // Allows all headers
         config.addAllowedMethod("*");         // Allows all methods (GET, POST, PUT, etc.)
         config.setAllowCredentials(true);
