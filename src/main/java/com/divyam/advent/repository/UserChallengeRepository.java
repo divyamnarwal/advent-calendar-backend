@@ -2,7 +2,6 @@ package com.divyam.advent.repository;
 
 import com.divyam.advent.enums.ChallengeCategory;
 import com.divyam.advent.enums.CompletionStatus;
-import com.divyam.advent.enums.Mood;
 import com.divyam.advent.model.UserChallenge;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -103,6 +102,14 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
      * @return total count of challenges for this user
      */
     long countByUser_Id(Long userId);
+
+    @Query("SELECT COUNT(uc) FROM UserChallenge uc " +
+           "WHERE uc.user.id = :userId " +
+           "AND uc.challenge.sourceVersion = :sourceVersion")
+    long countByUserIdAndChallengeSourceVersion(
+            @Param("userId") Long userId,
+            @Param("sourceVersion") String sourceVersion
+    );
 
     /**
      * Count challenges for a user with a specific status.

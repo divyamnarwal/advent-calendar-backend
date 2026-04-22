@@ -5,11 +5,14 @@ import com.divyam.advent.enums.Culture;
 import com.divyam.advent.enums.EnergyLevel;
 import com.divyam.advent.model.Challenge;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
@@ -64,4 +67,23 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
      */
     @Query("SELECT c FROM Challenge c WHERE c.culture != :culture AND c.active = true")
     List<Challenge> findCrossCulturalChallenges(@Param("culture") Culture culture);
+
+    List<Challenge> findBySourceVersionAndActiveTrueOrderByCycleDayAsc(String sourceVersion);
+
+    Optional<Challenge> findBySourceVersionAndCycleDayAndActiveTrue(String sourceVersion, Integer cycleDay);
+
+    @Query("SELECT c FROM Challenge c " +
+           "WHERE c.active = true AND c.sourceVersion IS NOT NULL " +
+           "ORDER BY c.cycleDay ASC")
+    List<Challenge> findCurrentCycleChallenges();
+
+    @Query("SELECT DISTINCT c.sourceVersion FROM Challenge c " +
+           "WHERE c.active = true AND c.sourceVersion IS NOT NULL")
+    Optional<String> findCurrentSourceVersion();
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE Challenge c SET c.active = false " +
+           "WHERE c.active = true AND (c.sourceVersion IS NULL OR c.sourceVersion <> :sourceVersion)")
+    int deactivateChallengesOutsideSourceVersion(@Param("sourceVersion") String sourceVersion);
 }

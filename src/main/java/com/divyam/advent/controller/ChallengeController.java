@@ -1,6 +1,7 @@
 
 package com.divyam.advent.controller;
 
+import com.divyam.advent.dto.ChallengeCycleDayDto;
 import com.divyam.advent.enums.ChallengeCategory;
 import com.divyam.advent.enums.Mood;
 import com.divyam.advent.model.Challenge;
@@ -58,6 +59,11 @@ public class ChallengeController {
     public ResponseEntity<List<Challenge>> getActiveChallengesByCategory(@PathVariable ChallengeCategory category) {
         List<Challenge> challenges = challengeService.getActiveChallengesByCategory(category);
         return new ResponseEntity<>(challenges, HttpStatus.OK);
+    }
+
+    @GetMapping("/cycle")
+    public ResponseEntity<List<ChallengeCycleDayDto>> getCurrentCyclePlan() {
+        return ResponseEntity.ok(challengeService.getCurrentCyclePlan());
     }
 
     /**

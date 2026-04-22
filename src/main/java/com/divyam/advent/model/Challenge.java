@@ -34,6 +34,12 @@ public class Challenge {
     @Column(name = "culture", nullable = false)
     private Culture culture = Culture.GLOBAL;
 
+    @Column(name = "cycle_day")
+    private Integer cycleDay;
+
+    @Column(name = "source_version")
+    private String sourceVersion;
+
     public Challenge() {
     }
 
@@ -99,5 +105,21 @@ public class Challenge {
 
     public void setCulture(Culture culture) {
         this.culture = culture;
+    }
+
+    public Integer getCycleDay() {
+        return cycleDay;
+    }
+
+    public void setCycleDay(Integer cycleDay) {
+        this.cycleDay = cycleDay;
+    }
+
+    public String getSourceVersion() {
+        return sourceVersion;
+    }
+
+    public void setSourceVersion(String sourceVersion) {
+        this.sourceVersion = sourceVersion;
     }
 }
