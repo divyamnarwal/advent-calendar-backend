@@ -1,6 +1,8 @@
 package com.divyam.advent.config;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -20,8 +22,11 @@ public class CorsConfig {
     @Bean
     public CorsFilter corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
-        String[] origins = allowedOriginsRaw.split(",");
-        config.setAllowedOrigins(Arrays.asList(origins));
+        List<String> origins = Arrays.stream(allowedOriginsRaw.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .collect(Collectors.toList());
+        config.setAllowedOrigins(origins);
         config.addAllowedHeader("*");         // Allows all headers
         config.addAllowedMethod("*");         // Allows all methods (GET, POST, PUT, etc.)
         config.setAllowCredentials(true);
