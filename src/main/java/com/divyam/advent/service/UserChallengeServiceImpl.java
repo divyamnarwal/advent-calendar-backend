@@ -1,7 +1,10 @@
 package com.divyam.advent.service;
 
 import com.divyam.advent.dto.UserProgressDto;
+import com.divyam.advent.enums.ChallengeCategory;
 import com.divyam.advent.enums.CompletionStatus;
+import com.divyam.advent.enums.Culture;
+import com.divyam.advent.enums.EnergyLevel;
 import com.divyam.advent.enums.Mood;
 import com.divyam.advent.exception.ResourceNotFoundException;
 import com.divyam.advent.model.Challenge;
@@ -16,9 +19,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 @Service
 public class UserChallengeServiceImpl implements UserChallengeService {
@@ -172,7 +180,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             return cached;
         }
 
-        Challenge selected = selectDailyChallenge(user);
+        Challenge selected = selectDailyChallenge(user, mood);
         previewCache.put(key, selected);
         return selected;
     }
@@ -201,7 +209,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         PreviewKey key = new PreviewKey(userId, today, mood);
         Challenge expected = previewCache.get(key);
         if (expected == null) {
-            expected = selectDailyChallenge(user);
+            expected = selectDailyChallenge(user, mood);
         }
 
         if (expected.getId() == null || !expected.getId().equals(challengeId)) {
@@ -228,7 +236,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             return existingToday.get(0);
         }
 
-        Challenge selectedChallenge = selectDailyChallenge(user);
+        Challenge selectedChallenge = selectDailyChallenge(user, Mood.NEUTRAL);
         return userChallengeRepository.save(new UserChallenge(user, selectedChallenge, CompletionStatus.ASSIGNED));
     }
 
@@ -247,10 +255,144 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             return userChallengeRepository.save(existing);
         }
 
-        Challenge selectedChallenge = selectDailyChallenge(user);
+        Challenge selectedChallenge = selectDailyChallenge(user, mood);
         UserChallenge userChallenge = new UserChallenge(user, selectedChallenge, CompletionStatus.ASSIGNED);
         userChallenge.setMood(mood);
         return userChallengeRepository.save(userChallenge);
+    }
+
+    private Challenge selectDailyChallenge(User user, Mood mood) {
+        List<UserChallenge> history = userChallengeRepository.findByUser_Id(user.getId());
+        LocalDateTime startOfToday = LocalDate.now().atStartOfDay();
+
+        Set<Long> todaysChallengeIds = history.stream()
+                .filter(userChallenge -> userChallenge.getStartTime() != null
+                        && !userChallenge.getStartTime().isBefore(startOfToday))
+                .map(userChallenge -> userChallenge.getChallenge().getId())
+                .collect(Collectors.toSet());
+
+        Map<Long, Long> challengeUsageCounts = history.stream()
+                .collect(Collectors.groupingBy(
+                        userChallenge -> userChallenge.getChallenge().getId(),
+                        Collectors.counting()
+                ));
+
+        Map<ChallengeCategory, Long> categoryUsageCounts = history.stream()
+                .collect(Collectors.groupingBy(
+                        userChallenge -> userChallenge.getChallenge().getCategory(),
+                        Collectors.counting()
+                ));
+
+        Set<Long> seenChallengeIds = challengeUsageCounts.keySet();
+        Optional<UserChallenge> latestChallenge = history.stream()
+                .filter(userChallenge -> userChallenge.getStartTime() != null)
+                .max(Comparator.comparing(UserChallenge::getStartTime));
+
+        Long latestChallengeId = latestChallenge
+                .map(userChallenge -> userChallenge.getChallenge().getId())
+                .orElse(null);
+        ChallengeCategory latestCategory = latestChallenge
+                .map(userChallenge -> userChallenge.getChallenge().getCategory())
+                .orElse(null);
+
+        List<Challenge> candidates = selectDailyCandidates(user, mood);
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException("No active challenge is available for mood " + mood);
+        }
+
+        List<Challenge> filteredCandidates = filterIfPossible(
+                candidates,
+                challenge -> !todaysChallengeIds.contains(challenge.getId())
+        );
+        filteredCandidates = filterIfPossible(
+                filteredCandidates,
+                challenge -> !seenChallengeIds.contains(challenge.getId())
+        );
+        filteredCandidates = filterIfPossible(
+                filteredCandidates,
+                challenge -> latestCategory == null || challenge.getCategory() != latestCategory
+        );
+        filteredCandidates = filterIfPossible(
+                filteredCandidates,
+                challenge -> latestChallengeId == null || !challenge.getId().equals(latestChallengeId)
+        );
+
+        return filteredCandidates.stream()
+                .min(Comparator
+                        .comparingLong((Challenge challenge) ->
+                                challengeUsageCounts.getOrDefault(challenge.getId(), 0L))
+                        .thenComparingLong(challenge ->
+                                categoryUsageCounts.getOrDefault(challenge.getCategory(), 0L))
+                        .thenComparing(challenge -> challenge.getCategory().name())
+                        .thenComparingInt(challenge ->
+                                challenge.getCycleDay() != null ? challenge.getCycleDay() : Integer.MAX_VALUE)
+                        .thenComparingLong(challenge ->
+                                challenge.getId() != null ? challenge.getId() : Long.MAX_VALUE))
+                .orElseThrow(() -> new IllegalStateException("No daily challenge candidates remain"));
+    }
+
+    private List<Challenge> selectDailyCandidates(User user, Mood mood) {
+        for (EnergyLevel energyLevel : preferredEnergyLevels(mood)) {
+            List<Challenge> seededCultureAware = challengeRepository.findByEnergyLevelAndActiveTrue(energyLevel)
+                    .stream()
+                    .filter(challenge -> challenge.getSourceVersion() == null)
+                    .filter(challenge -> matchesUserCulture(challenge, user))
+                    .collect(Collectors.toList());
+            if (!seededCultureAware.isEmpty()) {
+                return seededCultureAware;
+            }
+
+            List<Challenge> seededFallback = challengeRepository.findByEnergyLevelAndActiveTrue(energyLevel)
+                    .stream()
+                    .filter(challenge -> challenge.getSourceVersion() == null)
+                    .collect(Collectors.toList());
+            if (!seededFallback.isEmpty()) {
+                return seededFallback;
+            }
+        }
+
+        return selectCycleFallbackCandidates(mood);
+    }
+
+    private List<Challenge> selectCycleFallbackCandidates(Mood mood) {
+        try {
+            String currentSourceVersion = challengeCycleSyncService.getCurrentSourceVersion();
+            List<Challenge> cycleChallenges = challengeRepository
+                    .findBySourceVersionAndActiveTrueOrderByCycleDayAsc(currentSourceVersion);
+
+            for (EnergyLevel energyLevel : preferredEnergyLevels(mood)) {
+                List<Challenge> energyMatched = cycleChallenges.stream()
+                        .filter(challenge -> challenge.getEnergyLevel() == energyLevel)
+                        .collect(Collectors.toList());
+                if (!energyMatched.isEmpty()) {
+                    return energyMatched;
+                }
+            }
+
+            return cycleChallenges;
+        } catch (IllegalStateException exception) {
+            return List.of();
+        }
+    }
+
+    private List<EnergyLevel> preferredEnergyLevels(Mood mood) {
+        return switch (mood) {
+            case LOW -> List.of(EnergyLevel.LOW, EnergyLevel.MEDIUM);
+            case NEUTRAL -> List.of(EnergyLevel.MEDIUM, EnergyLevel.LOW, EnergyLevel.HIGH);
+            case HIGH -> List.of(EnergyLevel.HIGH, EnergyLevel.MEDIUM);
+        };
+    }
+
+    private boolean matchesUserCulture(Challenge challenge, User user) {
+        Culture userCulture = user.getCountry() != null ? user.getCountry() : Culture.GLOBAL;
+        return challenge.getCulture() == Culture.GLOBAL || challenge.getCulture() == userCulture;
+    }
+
+    private List<Challenge> filterIfPossible(List<Challenge> candidates, Predicate<Challenge> predicate) {
+        List<Challenge> filtered = candidates.stream()
+                .filter(predicate)
+                .collect(Collectors.toList());
+        return filtered.isEmpty() ? candidates : filtered;
     }
 
     private Challenge selectDailyChallenge(User user) {
