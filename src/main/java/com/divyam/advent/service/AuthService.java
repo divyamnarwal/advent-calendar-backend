@@ -2,6 +2,7 @@ package com.divyam.advent.service;
 
 import com.divyam.advent.dto.AuthEnsureUserRequest;
 import com.divyam.advent.enums.Culture;
+import com.divyam.advent.exception.UserBannedException;
 import com.divyam.advent.model.User;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -22,18 +23,33 @@ public class AuthService {
         if (request == null) {
             throw new IllegalArgumentException("Request body is required");
         }
-        return userService.upsertAuthUser(
+        User user = userService.upsertAuthUser(
                 AUTH_PROVIDER_CLERK,
                 getSubject(jwt),
                 request.getEmail(),
                 request.getName(),
                 request.getCountry() != null ? request.getCountry() : Culture.GLOBAL
         );
+        return enforceNotBanned(user);
     }
 
     public User getCurrentUser(Jwt jwt) {
-        return userService.getByAuthSubject(AUTH_PROVIDER_CLERK, getSubject(jwt))
+        User user = userService.getByAuthSubject(AUTH_PROVIDER_CLERK, getSubject(jwt))
                 .orElseThrow(() -> new AccessDeniedException("Authenticated user is not linked yet"));
+        return enforceNotBanned(user);
+    }
+
+    /**
+     * Auto-lifts expired bans, then throws {@link UserBannedException} if the
+     * user is still under an active ban. Called on every authenticated entry
+     * point so a banned user can't touch any endpoint until the ban ends.
+     */
+    private User enforceNotBanned(User user) {
+        User reconciled = userService.reconcileBan(user);
+        if (reconciled.isCurrentlyBanned()) {
+            throw new UserBannedException(reconciled.getBanReason(), reconciled.getBanExpiresAt());
+        }
+        return reconciled;
     }
 
     public void validateUserAccess(Jwt jwt, Long userId) {

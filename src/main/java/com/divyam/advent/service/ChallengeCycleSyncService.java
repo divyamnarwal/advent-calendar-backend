@@ -52,11 +52,13 @@ public class ChallengeCycleSyncService {
 
             if (existingActiveCycle.size() == parsedCycle.days().size()) {
                 log.info("Challenge cycle already synced from {}", pdfPath);
+                applyRussianTranslations(parsedCycle.sourceVersion());
                 return;
             }
 
             challengeRepository.deactivateChallengesOutsideSourceVersion(parsedCycle.sourceVersion());
             persistCycle(parsedCycle);
+            applyRussianTranslations(parsedCycle.sourceVersion());
             log.info("Synced {} challenge days from {}", parsedCycle.days().size(), pdfPath);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse challenge PDF: " + pdfPath, exception);
@@ -82,7 +84,30 @@ public class ChallengeCycleSyncService {
             challenge.setActive(true);
             challenge.setCycleDay(day.dayNumber());
             challenge.setSourceVersion(parsedCycle.sourceVersion());
+            ChallengeCycleRuTranslations.forDay(day.dayNumber()).ifPresent(ru -> {
+                challenge.setTitleRu(ru.title());
+                challenge.setDescriptionRu(ru.description());
+            });
             challengeRepository.save(challenge);
+        }
+    }
+
+    /**
+     * Fills Russian title/description on the active cycle by day number, only where it is
+     * still missing — so it covers already-synced installs and never clobbers admin edits.
+     */
+    private void applyRussianTranslations(String sourceVersion) {
+        List<Challenge> cycle = challengeRepository
+                .findBySourceVersionAndActiveTrueOrderByCycleDayAsc(sourceVersion);
+        for (Challenge challenge : cycle) {
+            if (challenge.getTitleRu() != null && !challenge.getTitleRu().isBlank()) {
+                continue;
+            }
+            ChallengeCycleRuTranslations.forDay(challenge.getCycleDay()).ifPresent(ru -> {
+                challenge.setTitleRu(ru.title());
+                challenge.setDescriptionRu(ru.description());
+                challengeRepository.save(challenge);
+            });
         }
     }
 

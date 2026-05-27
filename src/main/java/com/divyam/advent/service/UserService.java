@@ -24,4 +24,17 @@ public interface UserService {
             String name,
             Culture country
     );
+
+    User setAdminRole(Long userId, boolean admin);
+
+    User setBan(Long userId, String reason, java.time.LocalDateTime expiresAt);
+
+    User clearBan(Long userId);
+
+    /**
+     * Returns the user with ban state reconciled: if the ban has expired by
+     * wall-clock time, the fields are cleared and persisted. After the call,
+     * {@code user.isCurrentlyBanned()} is the authoritative ban state.
+     */
+    User reconcileBan(User user);
 }

@@ -70,9 +70,10 @@ public class PhotoController {
 
     @GetMapping("/limit-status")
     public ResponseEntity<PhotoService.PhotoLimitStatusResponse> getMonthlyLimitStatus(
-            @RequestParam Long userId
+            @AuthenticationPrincipal Jwt jwt
     ) {
-        return ResponseEntity.ok(photoService.getMonthlyLimitStatus(userId));
+        User currentUser = authService.getCurrentUser(jwt);
+        return ResponseEntity.ok(photoService.getMonthlyLimitStatus(currentUser.getId()));
     }
 
     @DeleteMapping("/{photoId}")

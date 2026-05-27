@@ -1,6 +1,7 @@
 package com.divyam.advent.model;
 
 import com.divyam.advent.enums.CompletionStatus;
+import com.divyam.advent.enums.ModerationStatus;
 import com.divyam.advent.enums.Mood;
 import jakarta.persistence.*;
 
@@ -62,6 +63,34 @@ public class UserChallenge {
     @Enumerated(EnumType.STRING)
     @Column(name = "mood", nullable = true)
     private Mood mood;
+
+    /**
+     * URL of the proof photo uploaded when completing this challenge.
+     * A proof photo is mandatory to move a challenge to COMPLETED.
+     */
+    @Column(name = "proof_photo_url", length = 1024)
+    private String proofPhotoUrl;
+
+    /**
+     * Cloudinary public id of the proof photo (used for cleanup / reference).
+     */
+    @Column(name = "proof_photo_public_id")
+    private String proofPhotoPublicId;
+
+    /**
+     * Free-form note from the user describing what they did. Shown to admins
+     * in the moderation feed alongside the proof photo.
+     */
+    @Column(name = "user_reflection", length = 2000)
+    private String userReflection;
+
+    /**
+     * Admin moderation state. Defaults to OK on creation; admins flip to
+     * FLAGGED or HIDDEN via /admin endpoints (post-approval model).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "moderation_status", nullable = false)
+    private ModerationStatus moderationStatus = ModerationStatus.PENDING;
 
     /**
      * Default constructor required by JPA.
@@ -136,5 +165,54 @@ public class UserChallenge {
 
     public void setMood(Mood mood) {
         this.mood = mood;
+    }
+
+    public String getProofPhotoUrl() {
+        return proofPhotoUrl;
+    }
+
+    public void setProofPhotoUrl(String proofPhotoUrl) {
+        this.proofPhotoUrl = proofPhotoUrl;
+    }
+
+    public String getProofPhotoPublicId() {
+        return proofPhotoPublicId;
+    }
+
+    public void setProofPhotoPublicId(String proofPhotoPublicId) {
+        this.proofPhotoPublicId = proofPhotoPublicId;
+    }
+
+    public String getUserReflection() {
+        return userReflection;
+    }
+
+    public void setUserReflection(String userReflection) {
+        this.userReflection = userReflection;
+    }
+
+    public ModerationStatus getModerationStatus() {
+        return moderationStatus;
+    }
+
+    public void setModerationStatus(ModerationStatus moderationStatus) {
+        this.moderationStatus = moderationStatus;
+    }
+
+    /**
+     * Deadline by which this assignment must be completed. If the challenge has
+     * an admin-set {@code durationMinutes}, deadline = startTime + duration.
+     * Otherwise the default is "until the next day rolls over" — the midnight
+     * after the start day. Returns null if startTime is missing.
+     */
+    public LocalDateTime getEffectiveDeadline() {
+        if (startTime == null) {
+            return null;
+        }
+        Integer limit = challenge != null ? challenge.getDurationMinutes() : null;
+        if (limit != null) {
+            return startTime.plusMinutes(limit);
+        }
+        return startTime.toLocalDate().plusDays(1).atStartOfDay();
     }
 }

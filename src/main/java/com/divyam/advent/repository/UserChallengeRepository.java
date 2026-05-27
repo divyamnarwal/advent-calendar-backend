@@ -2,6 +2,7 @@ package com.divyam.advent.repository;
 
 import com.divyam.advent.enums.ChallengeCategory;
 import com.divyam.advent.enums.CompletionStatus;
+import com.divyam.advent.enums.ModerationStatus;
 import com.divyam.advent.model.UserChallenge;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -49,6 +50,28 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
      */
     List<UserChallenge> findByUser_IdAndStatus(Long userId, CompletionStatus status);
 
+    /**
+     * Admin moderation feed: completed challenges, newest first, optionally
+     * filtered by moderation status. Caller passes a Pageable for pagination.
+     */
+    List<UserChallenge> findByStatusOrderByCompletionTimeDesc(
+            CompletionStatus status,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    List<UserChallenge> findByStatusAndModerationStatusOrderByCompletionTimeDesc(
+            CompletionStatus status,
+            ModerationStatus moderationStatus,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    /** Prize leaderboards: all challenges with a status whose completion falls in a period. */
+    List<UserChallenge> findByStatusAndCompletionTimeBetween(
+            CompletionStatus status,
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
     @Query("SELECT COUNT(uc) FROM UserChallenge uc WHERE uc.user.id = :userId " +
            "AND uc.startTime BETWEEN :start AND :end")
     long countAssignedInRange(
@@ -59,6 +82,7 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
 
     @Query("SELECT COUNT(uc) FROM UserChallenge uc WHERE uc.user.id = :userId " +
            "AND uc.status = 'COMPLETED' " +
+           "AND uc.moderationStatus = 'APPROVED' " +
            "AND uc.completionTime BETWEEN :start AND :end")
     long countCompletedInRange(
             @Param("userId") Long userId,
@@ -69,6 +93,7 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
     @Query("SELECT uc.challenge.category AS category, COUNT(uc) AS count FROM UserChallenge uc " +
            "WHERE uc.user.id = :userId " +
            "AND uc.status = 'COMPLETED' " +
+           "AND uc.moderationStatus = 'APPROVED' " +
            "AND uc.completionTime BETWEEN :start AND :end " +
            "GROUP BY uc.challenge.category")
     List<CategoryCountProjection> countCompletedByCategoryInRange(
@@ -215,6 +240,7 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
      */
     @Query("SELECT COUNT(uc) FROM UserChallenge uc " +
            "WHERE uc.status = 'COMPLETED' " +
+           "AND uc.moderationStatus = 'APPROVED' " +
            "AND uc.startTime BETWEEN :start AND :end")
     long countCompletedToday(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
@@ -308,7 +334,20 @@ public interface UserChallengeRepository extends JpaRepository<UserChallenge, Lo
     @Query("SELECT uc.completionTime FROM UserChallenge uc " +
            "WHERE uc.user.id = :userId " +
            "AND uc.status = 'COMPLETED' " +
+           "AND uc.moderationStatus = 'APPROVED' " +
            "AND uc.completionTime IS NOT NULL " +
            "ORDER BY uc.completionTime DESC")
-    List<LocalDateTime> findCompletionTimesDesc(@Param("userId") Long userId);
+    List<LocalDateTime> findApprovedCompletionTimesDesc(@Param("userId") Long userId);
+
+    long countByUser_IdAndStatusAndModerationStatus(
+            Long userId,
+            CompletionStatus status,
+            com.divyam.advent.enums.ModerationStatus moderationStatus
+    );
+
+    List<UserChallenge> findByUser_IdAndStatusAndModerationStatus(
+            Long userId,
+            CompletionStatus status,
+            com.divyam.advent.enums.ModerationStatus moderationStatus
+    );
 }

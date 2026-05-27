@@ -1,5 +1,6 @@
 package com.divyam.advent.controller;
 
+import com.divyam.advent.dto.CompleteChallengeRequest;
 import com.divyam.advent.dto.DailyChallengeConfirmRequest;
 import com.divyam.advent.dto.UserProgressDto;
 import com.divyam.advent.enums.CompletionStatus;
@@ -153,20 +154,22 @@ public class UserChallengeController {
     }
 
     /**
-     * Mark a challenge as completed.
-     * PUT /user-challenges/1/complete
+     * Mark a challenge as completed. A proof photo is mandatory.
+     * PUT /user-challenges/1/complete  body: { "photoUrl": "...", "photoPublicId": "..." }
      */
     @PutMapping("/{id}/complete")
     public ResponseEntity<UserChallenge> markAsCompleted(
             @AuthenticationPrincipal Jwt jwt,
-            @PathVariable Long id
+            @PathVariable Long id,
+            @Valid @RequestBody CompleteChallengeRequest request
     ) {
         UserChallenge existing = userChallengeService.getUserChallengeById(id);
         if (existing.getUser() == null || existing.getUser().getId() == null) {
             throw new AccessDeniedException("Challenge owner not found");
         }
         authService.validateUserAccess(jwt, existing.getUser().getId());
-        UserChallenge userChallenge = userChallengeService.markAsCompleted(id);
+        UserChallenge userChallenge = userChallengeService.markAsCompleted(
+                id, request.getPhotoUrl(), request.getPhotoPublicId(), request.getUserReflection());
         return ResponseEntity.ok(userChallenge);
     }
 

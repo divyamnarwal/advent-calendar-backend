@@ -44,11 +44,14 @@ public interface UserChallengeService {
     UserChallenge getUserChallengeById(Long id);
 
     /**
-     * Mark a challenge as completed for a user.
+     * Mark a challenge as completed for a user. A proof photo is mandatory.
      * @param id the UserChallenge ID
+     * @param proofPhotoUrl URL of the uploaded proof photo (required, non-blank)
+     * @param proofPhotoPublicId Cloudinary public id of the proof photo (optional)
+     * @param userReflection optional free-text note from the user describing what they did
      * @return the updated UserChallenge
      */
-    UserChallenge markAsCompleted(Long id);
+    UserChallenge markAsCompleted(Long id, String proofPhotoUrl, String proofPhotoPublicId, String userReflection);
 
     /**
      * Update the status of a UserChallenge.

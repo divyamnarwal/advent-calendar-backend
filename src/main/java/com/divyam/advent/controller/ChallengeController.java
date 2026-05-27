@@ -49,6 +49,27 @@ public class ChallengeController {
         return new ResponseEntity<>(createdChallenge, HttpStatus.CREATED);
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<Challenge> updateChallenge(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @RequestBody Challenge challenge
+    ) {
+        adminGuard.requireAdmin(getClerkUserId(jwt));
+        Challenge updated = challengeService.updateChallenge(id, challenge);
+        return ResponseEntity.ok(updated);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteChallenge(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id
+    ) {
+        adminGuard.requireAdmin(getClerkUserId(jwt));
+        challengeService.deleteChallenge(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping
     public ResponseEntity<List<Challenge>> getAllChallenges() {
         List<Challenge> challenges = challengeService.getAllChallenges();

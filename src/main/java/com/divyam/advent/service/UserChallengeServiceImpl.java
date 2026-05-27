@@ -6,6 +6,7 @@ import com.divyam.advent.enums.CompletionStatus;
 import com.divyam.advent.enums.Culture;
 import com.divyam.advent.enums.EnergyLevel;
 import com.divyam.advent.enums.Mood;
+import com.divyam.advent.exception.ChallengeExpiredException;
 import com.divyam.advent.exception.ResourceNotFoundException;
 import com.divyam.advent.model.Challenge;
 import com.divyam.advent.model.User;
@@ -14,6 +15,7 @@ import com.divyam.advent.repository.ChallengeRepository;
 import com.divyam.advent.repository.UserChallengeRepository;
 import com.divyam.advent.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +38,8 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     private final ChallengeRepository challengeRepository;
     private final BadgeService badgeService;
     private final ChallengeCycleSyncService challengeCycleSyncService;
+    private final String proofUrlPrefix;
+    private final String expectedFolderSegment;
     private final ConcurrentHashMap<PreviewKey, Challenge> previewCache = new ConcurrentHashMap<>();
 
     private record PreviewKey(Long userId, LocalDate date, Mood mood) {
@@ -47,13 +51,21 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             UserRepository userRepository,
             ChallengeRepository challengeRepository,
             BadgeService badgeService,
-            ChallengeCycleSyncService challengeCycleSyncService
+            ChallengeCycleSyncService challengeCycleSyncService,
+            @Value("${cloudinary.cloud-name:}") String cloudName,
+            @Value("${cloudinary.folder:}") String folder
     ) {
         this.userChallengeRepository = userChallengeRepository;
         this.userRepository = userRepository;
         this.challengeRepository = challengeRepository;
         this.badgeService = badgeService;
         this.challengeCycleSyncService = challengeCycleSyncService;
+        this.proofUrlPrefix = (cloudName == null || cloudName.isBlank())
+                ? null
+                : "https://res.cloudinary.com/" + cloudName + "/";
+        this.expectedFolderSegment = (folder == null || folder.isBlank())
+                ? null
+                : "/" + folder + "/";
     }
 
     @Override
@@ -99,7 +111,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     }
 
     @Override
-    public UserChallenge markAsCompleted(Long id) {
+    public UserChallenge markAsCompleted(Long id, String proofPhotoUrl, String proofPhotoPublicId, String userReflection) {
         UserChallenge userChallenge = getUserChallengeById(id);
 
         if (userChallenge.getStatus() != CompletionStatus.ASSIGNED) {
@@ -109,8 +121,46 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             );
         }
 
+        LocalDateTime deadline = userChallenge.getEffectiveDeadline();
+        if (deadline != null && LocalDateTime.now().isAfter(deadline)) {
+            Integer limit = userChallenge.getChallenge().getDurationMinutes();
+            String reason = limit != null
+                    ? "Time limit exceeded: this challenge had " + limit + " min and is no longer completable."
+                    : "This challenge expired when the day rolled over and can no longer be completed.";
+            // Persist the loss before throwing so future reads see EXPIRED, win
+            // rate updates, and the user can't retry the same quest.
+            userChallenge.setStatus(CompletionStatus.EXPIRED);
+            userChallengeRepository.save(userChallenge);
+            badgeService.evaluateAndAssignBadges(userChallenge.getUser());
+            throw new ChallengeExpiredException(reason);
+        }
+
+        if (proofPhotoUrl == null || proofPhotoUrl.trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "A proof photo is required to complete this challenge."
+            );
+        }
+        String trimmedUrl = proofPhotoUrl.trim();
+        if (proofUrlPrefix != null
+                && (!trimmedUrl.startsWith(proofUrlPrefix)
+                || (expectedFolderSegment != null && !trimmedUrl.contains(expectedFolderSegment)))) {
+            throw new IllegalArgumentException(
+                    "Proof photo URL must point to the configured Cloudinary upload folder."
+            );
+        }
+
+        userChallenge.setProofPhotoUrl(trimmedUrl);
+        if (proofPhotoPublicId != null && !proofPhotoPublicId.trim().isEmpty()) {
+            userChallenge.setProofPhotoPublicId(proofPhotoPublicId.trim());
+        }
+        if (userReflection != null && !userReflection.trim().isEmpty()) {
+            userChallenge.setUserReflection(userReflection.trim());
+        }
         userChallenge.setStatus(CompletionStatus.COMPLETED);
         userChallenge.setCompletionTime(LocalDateTime.now());
+        // Proof always lands in PENDING — an admin must approve before stats
+        // (streak, win rate, ELO) count this completion.
+        userChallenge.setModerationStatus(com.divyam.advent.enums.ModerationStatus.PENDING);
 
         UserChallenge saved = userChallengeRepository.save(userChallenge);
         badgeService.evaluateAndAssignBadges(saved.getUser());
@@ -120,6 +170,15 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     @Override
     public UserChallenge updateStatus(Long id, CompletionStatus status) {
         UserChallenge userChallenge = getUserChallengeById(id);
+
+        if (status == CompletionStatus.COMPLETED
+                && (userChallenge.getProofPhotoUrl() == null
+                        || userChallenge.getProofPhotoUrl().trim().isEmpty())) {
+            throw new IllegalArgumentException(
+                    "A proof photo is required before a challenge can be completed."
+            );
+        }
+
         userChallenge.setStatus(status);
 
         if (status == CompletionStatus.COMPLETED) {
@@ -148,8 +207,12 @@ public class UserChallengeServiceImpl implements UserChallengeService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
 
         long totalAssigned = userChallengeRepository.countByUser_Id(userId);
-        long totalCompleted = userChallengeRepository.countByUser_IdAndStatus(
-                userId, CompletionStatus.COMPLETED
+        // Progress only counts admin-APPROVED completions, mirroring streak +
+        // win rate. PENDING / REJECTED don't bump the percentage.
+        long totalCompleted = userChallengeRepository.countByUser_IdAndStatusAndModerationStatus(
+                userId,
+                CompletionStatus.COMPLETED,
+                com.divyam.advent.enums.ModerationStatus.APPROVED
         );
 
         return new UserProgressDto(userId, user.getName(), totalAssigned, totalCompleted);
@@ -167,8 +230,10 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         LocalDate today = LocalDate.now();
         LocalDateTime startOfToday = today.atStartOfDay();
 
+        // One-strike-per-day: any quest today (ASSIGNED, COMPLETED, or EXPIRED)
+        // blocks a fresh selection.
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
 
         if (!existingToday.isEmpty()) {
             return existingToday.get(0).getChallenge();
@@ -198,10 +263,18 @@ public class UserChallengeServiceImpl implements UserChallengeService {
         LocalDateTime startOfToday = today.atStartOfDay();
 
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
 
         if (!existingToday.isEmpty()) {
             UserChallenge existing = existingToday.get(0);
+            if (existing.getStatus() != CompletionStatus.ASSIGNED) {
+                // Today is already settled (completed or expired) — no second
+                // shot. Surface as 409 via IllegalStateException.
+                throw new IllegalStateException(
+                        "Today's quest is already settled (" + existing.getStatus()
+                                + "); a new one cannot be confirmed."
+                );
+            }
             existing.setMood(mood);
             return userChallengeRepository.save(existing);
         }
@@ -230,7 +303,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
 
         LocalDateTime startOfToday = LocalDate.now().atStartOfDay();
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
 
         if (!existingToday.isEmpty()) {
             return existingToday.get(0);
@@ -247,12 +320,17 @@ public class UserChallengeServiceImpl implements UserChallengeService {
 
         LocalDateTime startOfToday = LocalDate.now().atStartOfDay();
         List<UserChallenge> existingToday = userChallengeRepository
-                .findByUser_IdAndStartTimeAfterAndStatus(userId, startOfToday, CompletionStatus.ASSIGNED);
+                .findByUser_IdAndStartTimeAfter(userId, startOfToday);
 
         if (!existingToday.isEmpty()) {
             UserChallenge existing = existingToday.get(0);
-            existing.setMood(mood);
-            return userChallengeRepository.save(existing);
+            // Only update mood on ASSIGNED quests — settled (COMPLETED/EXPIRED)
+            // are read-only.
+            if (existing.getStatus() == CompletionStatus.ASSIGNED) {
+                existing.setMood(mood);
+                return userChallengeRepository.save(existing);
+            }
+            return existing;
         }
 
         Challenge selectedChallenge = selectDailyChallenge(user, mood);
@@ -262,6 +340,13 @@ public class UserChallengeServiceImpl implements UserChallengeService {
     }
 
     private Challenge selectDailyChallenge(User user, Mood mood) {
+        // A date-bound (holiday) challenge for today takes absolute priority and is
+        // the only challenge that can be assigned on its calendar day.
+        Optional<Challenge> datedChallenge = findActiveDatedChallengeForToday(user);
+        if (datedChallenge.isPresent()) {
+            return datedChallenge.get();
+        }
+
         List<UserChallenge> history = userChallengeRepository.findByUser_Id(user.getId());
         LocalDateTime startOfToday = LocalDate.now().atStartOfDay();
 
@@ -336,6 +421,8 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             List<Challenge> seededCultureAware = challengeRepository.findByEnergyLevelAndActiveTrue(energyLevel)
                     .stream()
                     .filter(challenge -> challenge.getSourceVersion() == null)
+                    // Date-bound challenges only surface on their own day (handled separately).
+                    .filter(challenge -> !challenge.isDateBound())
                     .filter(challenge -> matchesUserCulture(challenge, user))
                     .collect(Collectors.toList());
             if (!seededCultureAware.isEmpty()) {
@@ -345,6 +432,7 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             List<Challenge> seededFallback = challengeRepository.findByEnergyLevelAndActiveTrue(energyLevel)
                     .stream()
                     .filter(challenge -> challenge.getSourceVersion() == null)
+                    .filter(challenge -> !challenge.isDateBound())
                     .collect(Collectors.toList());
             if (!seededFallback.isEmpty()) {
                 return seededFallback;
@@ -381,6 +469,23 @@ public class UserChallengeServiceImpl implements UserChallengeService {
             case NEUTRAL -> List.of(EnergyLevel.MEDIUM, EnergyLevel.LOW, EnergyLevel.HIGH);
             case HIGH -> List.of(EnergyLevel.HIGH, EnergyLevel.MEDIUM);
         };
+    }
+
+    /**
+     * Finds an active date-bound (holiday) challenge pinned to today's month/day.
+     * Prefers one matching the user's culture, otherwise falls back to any (e.g. GLOBAL).
+     */
+    private Optional<Challenge> findActiveDatedChallengeForToday(User user) {
+        LocalDate today = LocalDate.now();
+        List<Challenge> datedToday = challengeRepository.findByActiveTrueAndEventMonthAndEventDay(
+                today.getMonthValue(), today.getDayOfMonth());
+        if (datedToday.isEmpty()) {
+            return Optional.empty();
+        }
+        return datedToday.stream()
+                .filter(challenge -> matchesUserCulture(challenge, user))
+                .findFirst()
+                .or(() -> datedToday.stream().findFirst());
     }
 
     private boolean matchesUserCulture(Challenge challenge, User user) {

@@ -2,6 +2,17 @@
 ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS streak integer;
 ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS total_points bigint;
 ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS theme_preference varchar(255);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS is_admin boolean;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS elo bigint;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS bio varchar(300);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS accent_color varchar(32);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS featured_badge_id varchar(255);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS banner_url varchar(1024);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS social_vk varchar(512);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS social_telegram varchar(512);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS social_whatsapp varchar(512);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS social_instagram varchar(512);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS social_twitter varchar(512);
 
 UPDATE users SET streak = 0 WHERE streak IS NULL;
 UPDATE users SET total_points = 0 WHERE total_points IS NULL;
@@ -9,6 +20,8 @@ UPDATE users
 SET theme_preference = 'SYSTEM'
 WHERE theme_preference IS NULL
    OR theme_preference NOT IN ('LIGHT','DARK','SYSTEM');
+UPDATE users SET is_admin = false WHERE is_admin IS NULL;
+UPDATE users SET elo = 0 WHERE elo IS NULL;
 
 ALTER TABLE IF EXISTS users ALTER COLUMN streak SET DEFAULT 0;
 ALTER TABLE IF EXISTS users ALTER COLUMN total_points SET DEFAULT 0;
@@ -23,7 +36,47 @@ ALTER TABLE IF EXISTS users
     ADD CONSTRAINT users_theme_preference_check
     CHECK (theme_preference IN ('LIGHT','DARK','SYSTEM'));
 ALTER TABLE user_challenges DROP CONSTRAINT IF EXISTS user_challenges_status_check;
-ALTER TABLE user_challenges ADD CONSTRAINT user_challenges_status_check CHECK (status IN ('ASSIGNED','COMPLETED'));
+ALTER TABLE user_challenges ADD CONSTRAINT user_challenges_status_check CHECK (status IN ('ASSIGNED','COMPLETED','EXPIRED'));
+
+-- Moderation + user reflection (added 2026-05-26)
+ALTER TABLE IF EXISTS user_challenges ADD COLUMN IF NOT EXISTS user_reflection varchar(2000);
+ALTER TABLE IF EXISTS user_challenges ADD COLUMN IF NOT EXISTS moderation_status varchar(32);
+-- Drop the old CHECK first; otherwise the UPDATE below would violate it (old
+-- constraint forbids the new PENDING/APPROVED/REJECTED values).
+ALTER TABLE user_challenges DROP CONSTRAINT IF EXISTS user_challenges_moderation_status_check;
+-- Migrate legacy values (added 2026-05-27): OK/FLAGGED were already visible
+-- completions → treat as APPROVED so existing history isn't lost; HIDDEN was
+-- effectively a denial → REJECTED. New default is PENDING.
+UPDATE user_challenges SET moderation_status = 'APPROVED' WHERE moderation_status IN ('OK', 'FLAGGED');
+UPDATE user_challenges SET moderation_status = 'REJECTED' WHERE moderation_status = 'HIDDEN';
+UPDATE user_challenges SET moderation_status = 'PENDING' WHERE moderation_status IS NULL;
+ALTER TABLE IF EXISTS user_challenges ALTER COLUMN moderation_status SET DEFAULT 'PENDING';
+ALTER TABLE IF EXISTS user_challenges ALTER COLUMN moderation_status SET NOT NULL;
+ALTER TABLE user_challenges ADD CONSTRAINT user_challenges_moderation_status_check CHECK (moderation_status IN ('PENDING','APPROVED','REJECTED'));
+
+-- Bilingual challenge content (added 2026-05-26): Russian title/description, nullable (EN fallback)
+ALTER TABLE IF EXISTS challenges ADD COLUMN IF NOT EXISTS title_ru varchar(255);
+ALTER TABLE IF EXISTS challenges ADD COLUMN IF NOT EXISTS description_ru varchar(2000);
+
+-- Time-bound challenges (added 2026-05-27): optional duration in minutes from startTime to completion deadline. NULL = no limit.
+ALTER TABLE IF EXISTS challenges ADD COLUMN IF NOT EXISTS duration_minutes integer;
+
+-- Bans (added 2026-05-27): admin can ban a user with a reason + optional expiry.
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS banned boolean;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS ban_reason varchar(500);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS ban_expires_at timestamp;
+UPDATE users SET banned = false WHERE banned IS NULL;
+
+-- Cloudinary asset identifiers (added 2026-05-27): keep public_id alongside the
+-- URL so admin "clear avatar/banner" can destroy the Cloudinary asset instead
+-- of leaving it orphaned on the free tier.
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS avatar_public_id varchar(255);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS banner_public_id varchar(255);
+
+-- Optimistic locking (added 2026-05-27): @Version column on users so two
+-- concurrent badge re-evaluations can't silently overwrite each other.
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS version bigint;
+UPDATE users SET version = 0 WHERE version IS NULL;
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT 'Hidden Cafe Discovery', 'Find a quiet cafe you have never visited and spend 30 minutes there reading or people-watching.', 'EXPLORE_CITY', 'LOW', true, 'GLOBAL' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Hidden Cafe Discovery' AND description = 'Find a quiet cafe you have never visited and spend 30 minutes there reading or people-watching.' AND category = 'EXPLORE_CITY' AND energy_level = 'LOW' AND culture = 'GLOBAL');
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT 'Street Art Snapshot', 'Walk one street you rarely take and photograph 3 pieces of street art or murals.', 'EXPLORE_CITY', 'LOW', true, 'GLOBAL' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Street Art Snapshot' AND description = 'Walk one street you rarely take and photograph 3 pieces of street art or murals.' AND category = 'EXPLORE_CITY' AND energy_level = 'LOW' AND culture = 'GLOBAL');
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT 'Park Bench Pause', 'Visit a nearby park you do not usually go to and sit for 20 minutes observing the area.', 'EXPLORE_CITY', 'LOW', true, 'GLOBAL' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Park Bench Pause' AND description = 'Visit a nearby park you do not usually go to and sit for 20 minutes observing the area.' AND category = 'EXPLORE_CITY' AND energy_level = 'LOW' AND culture = 'GLOBAL');
@@ -84,4 +137,82 @@ INSERT INTO challenges (title, description, category, energy_level, active, cult
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT 'Random Act of Kindness Day', 'Do five small acts of kindness for five different people in one day.', 'WILDCARD', 'HIGH', true, 'GLOBAL' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Random Act of Kindness Day' AND description = 'Do five small acts of kindness for five different people in one day.' AND category = 'WILDCARD' AND energy_level = 'HIGH' AND culture = 'GLOBAL');
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT '24-Hour Creative Challenge', 'Complete a small creative project within 24 hours, like a short story or photo series.', 'WILDCARD', 'HIGH', true, 'GLOBAL' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = '24-Hour Creative Challenge' AND description = 'Complete a small creative project within 24 hours, like a short story or photo series.' AND category = 'WILDCARD' AND energy_level = 'HIGH' AND culture = 'GLOBAL');
 INSERT INTO challenges (title, description, category, energy_level, active, culture) SELECT 'Cozy Tea Game Night', 'Host a cozy tea-and-cards night inspired by Russian gatherings and invite a few friends.', 'WILDCARD', 'HIGH', true, 'RUSSIA' WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Cozy Tea Game Night' AND description = 'Host a cozy tea-and-cards night inspired by Russian gatherings and invite a few friends.' AND category = 'WILDCARD' AND energy_level = 'HIGH' AND culture = 'RUSSIA');
+
+-- Date-bound (holiday) challenges. They surface ONLY on their event_month/event_day
+-- (recurring every year) and take priority over the regular mood/culture selection.
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'New Year Intentions', 'Welcome the new year: write down three intentions for the year ahead and photograph your festive moment.', 'WILDCARD', 'LOW', true, 'GLOBAL', 1, 1 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'New Year Intentions' AND event_month = 1 AND event_day = 1);
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'Defender of the Fatherland Tribute', 'On Defender of the Fatherland Day, thank someone who serves or protects others and capture the moment.', 'CULTURAL_EXCHANGE', 'MEDIUM', true, 'RUSSIA', 2, 23 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Defender of the Fatherland Tribute' AND event_month = 2 AND event_day = 23);
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'Women''s Day Appreciation', 'For International Women''s Day, give flowers or a heartfelt note to a woman who inspires you and snap a photo.', 'SOCIAL_SPARK', 'MEDIUM', true, 'GLOBAL', 3, 8 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Women''s Day Appreciation' AND event_month = 3 AND event_day = 8);
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'Victory Day Remembrance', 'On Victory Day (9 May), visit a memorial or lay flowers to honor veterans, and photograph the tribute.', 'CULTURAL_EXCHANGE', 'MEDIUM', true, 'RUSSIA', 5, 9 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Victory Day Remembrance' AND event_month = 5 AND event_day = 9);
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'Russia Day Explorer', 'Celebrate Russia Day: visit a landmark or square in your city and capture what the day means to you.', 'EXPLORE_CITY', 'HIGH', true, 'RUSSIA', 6, 12 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'Russia Day Explorer' AND event_month = 6 AND event_day = 12);
+INSERT INTO challenges (title, description, category, energy_level, active, culture, event_month, event_day) SELECT 'New Year''s Eve Reflection', 'On the last evening of the year, gather with loved ones, reflect on a highlight, and photograph the celebration.', 'WILDCARD', 'MEDIUM', true, 'GLOBAL', 12, 31 WHERE NOT EXISTS (SELECT 1 FROM challenges WHERE title = 'New Year''s Eve Reflection' AND event_month = 12 AND event_day = 31);
+
+-- Russian translations for seeded challenges (added 2026-05-26).
+-- Idempotent: only fills rows that have no RU text yet, so admin edits are preserved.
+UPDATE challenges SET title_ru = 'Открой тихое кафе', description_ru = 'Найди тихое кафе, где ты никогда не был, и проведи там 30 минут за чтением или наблюдением за людьми.' WHERE title = 'Hidden Cafe Discovery' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Снимок уличного искусства', description_ru = 'Пройди по улице, где ты редко бываешь, и сфотографируй 3 граффити или мурала.' WHERE title = 'Street Art Snapshot' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Пауза на скамейке в парке', description_ru = 'Сходи в ближайший парк, где ты обычно не бываешь, и посиди 20 минут, наблюдая за окружением.' WHERE title = 'Park Bench Pause' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Тур по рынку', description_ru = 'Сходи на местный рынок и попробуй то, что никогда не пробовал.' WHERE title = 'Market Mystery Tour' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Прогулка к истории', description_ru = 'Выбери историческое здание, дойди до него и узнай один факт с таблички или из быстрого поиска.' WHERE title = 'Historic Block Fact Walk' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Охота за специями', description_ru = 'Сходи в продуктовый и найди три индийские специи или ингредиента, которые ты ещё не использовал.' WHERE title = 'Spice Aisle Hunt' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Транспортное приключение', description_ru = 'Прокатись на автобусе или поезде, которым никогда не пользовался, и изучи конечную остановку минимум час.' WHERE title = 'Transit Adventure' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Прогулка за узорами ранголи', description_ru = 'Пройдись по кампусу или городу и сфотографируй 5 ярких геометрических узоров в духе ранголи.' WHERE title = 'Rangoli Pattern Walk' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Круг по городской площади', description_ru = 'Сделай 30-минутный круг по центру города или главной площади в духе русских площадей и отметь три достопримечательности.' WHERE title = 'City Square Loop' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Геометрия в архитектуре', description_ru = 'Соверши долгую прогулку и сфотографируй 5 смелых геометрических деталей зданий в духе конструктивизма.' WHERE title = 'Geometry Architecture Walk' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Час изучения трендов', description_ru = 'Потрать час на изучение современного студенческого тренда, который ты не понимаешь, и разберись, что в нём нравится людям.' WHERE title = 'Trend Research Hour' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Музей мемов кампуса', description_ru = 'Собери пять мемов или внутренних шуток кампуса и объясни каждую себе или другу.' WHERE title = 'Campus Meme Museum' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Проверка чайной любви', description_ru = 'Приготовь или закажи масала-чай и пойми, почему он так популярен в кампусе.' WHERE title = 'Chai Craze Check' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Снимок русского тренда', description_ru = 'Найди три примера современного русского молодёжного тренда в музыке, моде или сленге.' WHERE title = 'Russian Trend Snapshot' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Эксперимент с микротрендом', description_ru = 'Попробуй один современный микротренд кампуса на день: метод учёбы, наряд или перекус.' WHERE title = 'Micro-Trend Experiment' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Капсула трендов', description_ru = 'Создай небольшую доску из пяти актуальных стилей или идей и сохрани её, чтобы вернуться позже.' WHERE title = 'Trend Time Capsule' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Русский плейлист сегодня', description_ru = 'Собери плейлист из шести песен, популярных сейчас в России, и послушай его на прогулке.' WHERE title = 'Russian Playlist Today' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Ремикс тренда', description_ru = 'Создай небольшой проект по мотивам современного тренда: постер, плейлист или образ.' WHERE title = 'Trend Remix Project' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Вечер трендов', description_ru = 'Организуй или присоединись к мини-встрече, чтобы попробовать тренд вместе: вечер настолок или новый перекус.' WHERE title = 'Pop-up Trend Night' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Танцевальный шаг кампуса', description_ru = 'Выучи короткое танцевальное движение, популярное в индийских кампусах, и научи друга или запиши себя.' WHERE title = 'Campus Dance Step Challenge' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Уголок библиотеки', description_ru = 'Найди уголок библиотеки, которым никогда не пользовался, и проведи там 45 минут за учёбой или отдыхом.' WHERE title = 'Library Corner Discovery' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Пауза на зелёной зоне', description_ru = 'Найди тихий зелёный уголок на кампусе и устрой там 20-минутный перерыв.' WHERE title = 'Campus Green Space Pause' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Чайный перерыв за учёбой', description_ru = 'Пригласи однокурсника на короткий чайный перерыв между занятиями.' WHERE title = 'Chai Study Break' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Тур по факультету', description_ru = 'Зайди в корпус факультета, где ты никогда не был, и найди один интересный стенд или лабораторию.' WHERE title = 'Department Tour' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Поход на мероприятие', description_ru = 'Сходи на мероприятие кампуса, куда обычно не ходишь, и останься минимум на 30 минут.' WHERE title = 'Campus Event Attendance' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Рулетка мест для учёбы', description_ru = 'Поучись сегодня в трёх разных местах кампуса и выбери любимое.' WHERE title = 'Study Spot Roulette' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Встреча в чайной', description_ru = 'Устрой простой чайный перерыв в общей комнате в духе русских студенческих посиделок и позови кого-нибудь.' WHERE title = 'Tea Room Meetup' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Охота за архитектурой', description_ru = 'Сфотографируй самые интересные архитектурные детали 10 разных зданий кампуса.' WHERE title = 'Campus Architecture Hunt' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Проба кружка', description_ru = 'Сходи на встречу студенческого клуба и поучаствуй минимум 30 минут, как в кружке.' WHERE title = 'Kruzhok Tryout' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Команда фестиваля', description_ru = 'Помоги подготовиться к культурному мероприятию кампуса или укрась общее пространство в течение часа.' WHERE title = 'Campus Fest Crew' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Комплимент незнакомцу', description_ru = 'Сделай искренний комплимент тому, кого плохо знаешь, лично или онлайн.' WHERE title = 'Compliment Stranger' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Напиши старому другу', description_ru = 'Свяжись с тем, с кем не общался полгода, и просто поздоровайся.' WHERE title = 'Message an Old Friend' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Чайная встреча', description_ru = 'Пригласи кого-нибудь на непринуждённый чайный перерыв.' WHERE title = 'Chai Connection' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Глубокий разговор', description_ru = 'Проведи 15-минутный разговор, в котором ты только задаёшь собеседнику вопросы.' WHERE title = 'Conversation Deep Dive' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Групповая учёба', description_ru = 'Организуй небольшую совместную учёбу на 2–4 человека.' WHERE title = 'Group Study Session' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Прогулка с чаем', description_ru = 'Пригласи кого-нибудь на короткую прогулку с горячим чаем — расслабленная встреча в русском стиле.' WHERE title = 'Tea Walk Invite' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Своё мероприятие', description_ru = 'Организуй небольшое событие: киновечер, потлак или вечер игр минимум на пять человек.' WHERE title = 'Community Event Hosting' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Организатор вечера игр', description_ru = 'Организуй непринуждённый вечер игр и собери минимум две компании друзей.' WHERE title = 'Game Night Organizer' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Волонтёрство вместе', description_ru = 'Собери нескольких друзей на небольшое волонтёрство или уборку кампуса.' WHERE title = 'Volunteer Together' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Смешение кругов общения', description_ru = 'Познакомь двух друзей, которые не знают друг друга, и начни короткий общий разговор.' WHERE title = 'Social Circle Mashup' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Фильм на другом языке', description_ru = 'Посмотри фильм на языке, которым не владеешь, с субтитрами.' WHERE title = 'Foreign Language Film' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Музыка мира', description_ru = 'Собери плейлист из 10 песен из 10 разных стран, которые ты ещё не изучал.' WHERE title = 'International Music Discovery' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Индийский фестиваль', description_ru = 'Узнай об одном индийском фестивале вне твоего региона и посмотри о нём короткое видео.' WHERE title = 'India Festival Snapshot' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Русский чайный ритуал', description_ru = 'Завари чашку чая и почитай о русской чайной традиции, пока пьёшь.' WHERE title = 'Russian Tea Ritual' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Рецепт из другой культуры', description_ru = 'Приготовь простое блюдо из культуры, отличной от твоей, и поделись им с кем-нибудь.' WHERE title = 'Global Recipe Attempt' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Индийское региональное блюдо', description_ru = 'Попробуй приготовить простое индийское региональное блюдо, которое ты никогда не делал.' WHERE title = 'Regional Indian Dish' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Русский гастрономический выбор', description_ru = 'Попробуй русский или восточноевропейский снек из магазина или по простому рецепту.' WHERE title = 'Russian Market Item' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Связь с иностранным студентом', description_ru = 'Проведи содержательный разговор с человеком из другой страны о повседневной жизни и культуре.' WHERE title = 'International Student Connection' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Вечер индийской культуры', description_ru = 'Устрой небольшой вечер индийской культуры с музыкой, снеком или историей для двух и более друзей.' WHERE title = 'Indian Culture Share Night' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Вечер русской культуры', description_ru = 'Устрой небольшой вечер русской культуры с музыкой, отрывком фильма или чаем для двух и более друзей.' WHERE title = 'Russian Culture Night' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Цифровая уборка', description_ru = 'Удали 50 ненужных фото или файлов и организуй одну папку на телефоне или ноутбуке.' WHERE title = 'Digital Cleanup' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Йога-перезагрузка', description_ru = 'Сделай мягкую 10-минутную растяжку из йоги, чтобы перезагрузить день.' WHERE title = 'Yoga Reset' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Наклейки с русскими словами', description_ru = 'Выучи пять простых русских слов и подпиши ими пять предметов в комнате на стикерах.' WHERE title = 'Russian Word Labels' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Час нового навыка', description_ru = 'Потрать час на изучение чего-то нового по уроку или курсу.' WHERE title = 'Skill Hour' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Аналоговый вечер', description_ru = 'Один вечер обойдись без цифровых развлечений и займись чем-то офлайн.' WHERE title = 'Analog Evening' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Творческое самовыражение', description_ru = 'Создай что-то небольшое — рисунок, стихотворение или поделку — без стремления к идеалу.' WHERE title = 'Creative Expression' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Эксперимент со специями', description_ru = 'Сделай простую индийскую смесь специй или снек и попробуй с другом.' WHERE title = 'Spice Mix Experiment' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'День добрых дел', description_ru = 'Сделай пять небольших добрых дел для пяти разных людей за один день.' WHERE title = 'Random Act of Kindness Day' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Творческий вызов за 24 часа', description_ru = 'Заверши небольшой творческий проект за 24 часа: рассказ или серию фото.' WHERE title = '24-Hour Creative Challenge' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Уютный вечер чая и игр', description_ru = 'Устрой уютный вечер с чаем и картами в духе русских посиделок и позови нескольких друзей.' WHERE title = 'Cozy Tea Game Night' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Новогодние намерения', description_ru = 'Встреть новый год: запиши три намерения на год вперёд и сфотографируй свой праздничный момент.' WHERE title = 'New Year Intentions' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Дань защитникам Отечества', description_ru = 'В День защитника Отечества поблагодари того, кто служит или защищает других, и запечатлей момент.' WHERE title = 'Defender of the Fatherland Tribute' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Поздравление с 8 Марта', description_ru = 'В Международный женский день подари цветы или тёплую записку женщине, которая тебя вдохновляет, и сделай фото.' WHERE title = 'Women''s Day Appreciation' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Память о Дне Победы', description_ru = 'В День Победы (9 мая) сходи к мемориалу или возложи цветы в честь ветеранов и сфотографируй это.' WHERE title = 'Victory Day Remembrance' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Исследователь Дня России', description_ru = 'Отпразднуй День России: сходи к достопримечательности или на площадь и запечатлей, что для тебя значит этот день.' WHERE title = 'Russia Day Explorer' AND (title_ru IS NULL OR title_ru = '');
+UPDATE challenges SET title_ru = 'Размышления в новогоднюю ночь', description_ru = 'В последний вечер года собери близких, вспомни лучший момент и сфотографируй празднование.' WHERE title = 'New Year''s Eve Reflection' AND (title_ru IS NULL OR title_ru = '');
 

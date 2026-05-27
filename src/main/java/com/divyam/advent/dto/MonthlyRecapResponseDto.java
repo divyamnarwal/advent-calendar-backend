@@ -20,6 +20,7 @@ public class MonthlyRecapResponseDto {
     private long capsulesUnlockedThisMonth;
     private long photosAddedThisMonth;
     private List<RecapPhotoPreviewDto> recentPhotos;
+    private String collageUrl;
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime generatedAt;
 
@@ -40,6 +41,7 @@ public class MonthlyRecapResponseDto {
             long capsulesUnlockedThisMonth,
             long photosAddedThisMonth,
             List<RecapPhotoPreviewDto> recentPhotos,
+            String collageUrl,
             LocalDateTime generatedAt
     ) {
         this.month = month;
@@ -55,6 +57,7 @@ public class MonthlyRecapResponseDto {
         this.capsulesUnlockedThisMonth = capsulesUnlockedThisMonth;
         this.photosAddedThisMonth = photosAddedThisMonth;
         this.recentPhotos = recentPhotos;
+        this.collageUrl = collageUrl;
         this.generatedAt = generatedAt;
     }
 
@@ -108,6 +111,10 @@ public class MonthlyRecapResponseDto {
 
     public List<RecapPhotoPreviewDto> getRecentPhotos() {
         return recentPhotos;
+    }
+
+    public String getCollageUrl() {
+        return collageUrl;
     }
 
     public LocalDateTime getGeneratedAt() {

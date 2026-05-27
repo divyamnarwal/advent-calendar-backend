@@ -1,0 +1,29 @@
+-- =====================================================================
+-- V1: Pre-Flyway baseline.
+--
+-- Placeholder. The live schema was created and evolved by Hibernate
+-- ddl-auto=update + idempotent ALTERs in the old data.sql. When Flyway
+-- runs against the existing database it will be "baselined" at V1 (this
+-- file is NOT executed on existing deploys because baseline-on-migrate
+-- is true). On a fresh install, Hibernate ddl-auto=update still creates
+-- the schema from @Entity definitions.
+--
+-- To convert this baseline into a real, authoritative schema script:
+--
+--   1. On a known-good prod DB:
+--        pg_dump --schema-only --no-owner --no-privileges \
+--          adventdb > V1__baseline.sql
+--      (overwrite the contents of this file with that output, dropping
+--      the flyway_schema_history table from the dump if present).
+--
+--   2. Flip `spring.jpa.hibernate.ddl-auto` from `update` to `validate`
+--      in application.properties.
+--
+--   3. Drop `spring.sql.init.mode=always` once seed INSERTs are moved to
+--      R__seed_challenges.sql (Flyway repeatable migration).
+--
+-- After that, schema is fully owned by Flyway; Hibernate just checks
+-- that entity definitions match the schema on startup.
+-- =====================================================================
+
+SELECT 1;

@@ -1,5 +1,7 @@
 package com.divyam.advent.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -21,6 +23,8 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Object> handleMethodArgumentNotValidException(MethodArgumentNotValidException ex) {
@@ -127,6 +131,26 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(body, HttpStatus.FORBIDDEN);
     }
 
+    @ExceptionHandler(UserBannedException.class)
+    public ResponseEntity<Object> handleUserBannedException(UserBannedException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", "USER_BANNED");
+        body.put("message", ex.getMessage());
+        body.put("reason", ex.getReason());
+        body.put("expiresAt", ex.getExpiresAt() != null ? ex.getExpiresAt().toString() : null);
+        body.put("timestamp", LocalDateTime.now(Clock.systemUTC()).toString() + "Z");
+        return new ResponseEntity<>(body, HttpStatus.FORBIDDEN);
+    }
+
+    @ExceptionHandler(ChallengeExpiredException.class)
+    public ResponseEntity<Object> handleChallengeExpiredException(ChallengeExpiredException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", "CHALLENGE_EXPIRED");
+        body.put("message", ex.getMessage());
+        body.put("timestamp", LocalDateTime.now(Clock.systemUTC()).toString() + "Z");
+        return new ResponseEntity<>(body, HttpStatus.CONFLICT);
+    }
+
     @ExceptionHandler(PhotoLimitExceededException.class)
     public ResponseEntity<Object> handlePhotoLimitExceededException(PhotoLimitExceededException ex) {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -140,8 +164,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleGenericException(Exception ex) {
-        // Log the full exception stack trace for debugging
-        ex.printStackTrace();
+        log.error("Unhandled exception", ex);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", LocalDateTime.now().toString());
         body.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());

@@ -68,6 +68,14 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
     @Query("SELECT c FROM Challenge c WHERE c.culture != :culture AND c.active = true")
     List<Challenge> findCrossCulturalChallenges(@Param("culture") Culture culture);
 
+    /**
+     * Find active challenges pinned to a specific calendar day (holiday challenges).
+     * @param eventMonth month 1-12
+     * @param eventDay day of month 1-31
+     * @return active challenges bound to that month/day
+     */
+    List<Challenge> findByActiveTrueAndEventMonthAndEventDay(Integer eventMonth, Integer eventDay);
+
     List<Challenge> findBySourceVersionAndActiveTrueOrderByCycleDayAsc(String sourceVersion);
 
     Optional<Challenge> findBySourceVersionAndCycleDayAndActiveTrue(String sourceVersion, Integer cycleDay);

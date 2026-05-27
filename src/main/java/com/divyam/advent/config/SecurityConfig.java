@@ -44,6 +44,10 @@ public class SecurityConfig {
             http
                     .authorizeHttpRequests(auth -> auth
                             .requestMatchers("/health", "/error").permitAll()
+                            // Actuator: /actuator/health is public (used by k8s/docker probes);
+                            // /actuator/info exposes git/version; /actuator/metrics is admin-only.
+                            .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                            .requestMatchers("/actuator/**").authenticated()
                             .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/challenges", "/challenges/category/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/pulse/today").authenticated()
@@ -56,6 +60,7 @@ public class SecurityConfig {
             http
                     .authorizeHttpRequests(auth -> auth
                             .requestMatchers("/health", "/error").permitAll()
+                            .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                             .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                             .requestMatchers(HttpMethod.GET, "/challenges", "/challenges/category/**").permitAll()
                             .anyRequest().denyAll()

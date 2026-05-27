@@ -1,9 +1,12 @@
 package com.divyam.advent.controller;
 
+import com.divyam.advent.dto.LeaderboardEntryDto;
+import com.divyam.advent.dto.PublicProfileDto;
 import com.divyam.advent.dto.UserRequestDto;
 import com.divyam.advent.dto.UserResponseDto;
 import com.divyam.advent.model.User;
 import com.divyam.advent.service.AuthService;
+import com.divyam.advent.service.ProfileService;
 import com.divyam.advent.service.UserService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,10 +26,30 @@ public class UserController {
 
     private final UserService userService;
     private final AuthService authService;
+    private final ProfileService profileService;
 
-    public UserController(UserService userService, AuthService authService) {
+    public UserController(UserService userService, AuthService authService, ProfileService profileService) {
         this.userService = userService;
         this.authService = authService;
+        this.profileService = profileService;
+    }
+
+    @GetMapping("/leaderboard")
+    public ResponseEntity<List<LeaderboardEntryDto>> getLeaderboard(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(defaultValue = "50") int limit
+    ) {
+        authService.getCurrentUser(jwt);
+        return ResponseEntity.ok(profileService.getLeaderboard(limit));
+    }
+
+    @GetMapping("/{id}/profile")
+    public ResponseEntity<PublicProfileDto> getPublicProfile(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id
+    ) {
+        authService.getCurrentUser(jwt);
+        return ResponseEntity.ok(profileService.getPublicProfile(id));
     }
 
     @PostMapping

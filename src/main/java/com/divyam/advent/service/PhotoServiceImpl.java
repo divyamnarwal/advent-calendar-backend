@@ -24,14 +24,14 @@ import java.util.stream.Collectors;
 @Service
 public class PhotoServiceImpl implements PhotoService {
 
-    private static final int MONTHLY_PHOTO_LIMIT = 30;
-
     private final PhotoRepository photoRepository;
     private final UserRepository userRepository;
     private final String cloudName;
     private final String apiKey;
     private final String apiSecret;
     private final String folder;
+    private final int monthlyPhotoLimit;
+    private final String uploadTransformation;
 
     public PhotoServiceImpl(
             PhotoRepository photoRepository,
@@ -39,7 +39,10 @@ public class PhotoServiceImpl implements PhotoService {
             @Value("${cloudinary.cloud-name}") String cloudName,
             @Value("${cloudinary.api-key}") String apiKey,
             @Value("${cloudinary.api-secret}") String apiSecret,
-            @Value("${cloudinary.folder}") String folder
+            @Value("${cloudinary.folder}") String folder,
+            @Value("${photo.monthly-limit:300}") int monthlyPhotoLimit,
+            @Value("${cloudinary.upload-transformation:c_limit,w_1600,h_1600,q_auto:good}")
+            String uploadTransformation
     ) {
         this.photoRepository = photoRepository;
         this.userRepository = userRepository;
@@ -47,6 +50,8 @@ public class PhotoServiceImpl implements PhotoService {
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.folder = folder;
+        this.monthlyPhotoLimit = monthlyPhotoLimit;
+        this.uploadTransformation = uploadTransformation;
     }
 
     @Override
@@ -55,15 +60,26 @@ public class PhotoServiceImpl implements PhotoService {
         ensureCloudinaryConfigured();
 
         long timestamp = Instant.now().getEpochSecond();
-        String payload = "folder=" + folder + "&timestamp=" + timestamp;
-        String signature = signPayload(payload);
+        // Incoming transformation: Cloudinary applies it BEFORE storing, so the stored
+        // master is already downscaled + quality-optimized (saves storage on the free tier).
+        // Signed params must be sorted alphabetically: folder, timestamp, transformation.
+        boolean hasTransformation = uploadTransformation != null && !uploadTransformation.trim().isEmpty();
+        String transformation = hasTransformation ? uploadTransformation.trim() : null;
+
+        StringBuilder payload = new StringBuilder("folder=").append(folder)
+                .append("&timestamp=").append(timestamp);
+        if (transformation != null) {
+            payload.append("&transformation=").append(transformation);
+        }
+        String signature = signPayload(payload.toString());
 
         return new PhotoUploadSignatureResponse(
                 cloudName,
                 apiKey,
                 folder,
                 timestamp,
-                signature
+                signature,
+                transformation
         );
     }
 
@@ -116,9 +132,9 @@ public class PhotoServiceImpl implements PhotoService {
 
         long currentCount = getCurrentMonthPhotoCount(userId);
         int used = Math.toIntExact(currentCount);
-        int remaining = Math.max(0, MONTHLY_PHOTO_LIMIT - used);
+        int remaining = Math.max(0, monthlyPhotoLimit - used);
 
-        return new PhotoLimitStatusResponse(used, remaining, MONTHLY_PHOTO_LIMIT);
+        return new PhotoLimitStatusResponse(used, remaining, monthlyPhotoLimit);
     }
 
     @Override
@@ -144,8 +160,8 @@ public class PhotoServiceImpl implements PhotoService {
         }
 
         long currentCount = getCurrentMonthPhotoCount(userId);
-        if (currentCount >= MONTHLY_PHOTO_LIMIT) {
-            throw new PhotoLimitExceededException(currentCount, MONTHLY_PHOTO_LIMIT);
+        if (currentCount >= monthlyPhotoLimit) {
+            throw new PhotoLimitExceededException(currentCount, monthlyPhotoLimit);
         }
     }
 

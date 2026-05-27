@@ -10,6 +10,7 @@ import com.divyam.advent.repository.PhotoRepository;
 import com.divyam.advent.repository.TimeCapsuleRepository;
 import com.divyam.advent.repository.UserChallengeRepository;
 import com.divyam.advent.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,10 @@ public class RecapServiceImpl implements RecapService {
     private final TimeCapsuleRepository timeCapsuleRepository;
     private final PhotoRepository photoRepository;
     private final UserRepository userRepository;
+
+    /** Cloudinary cloud name for building on-demand collage URLs. Empty disables the collage. */
+    @Value("${cloudinary.cloud-name:}")
+    private String cloudName;
 
     public RecapServiceImpl(
             UserChallengeRepository userChallengeRepository,
@@ -78,11 +83,15 @@ public class RecapServiceImpl implements RecapService {
         long capsulesCreated = timeCapsuleRepository.countByUserIdAndCreatedAtBetween(userId, monthStart, monthEnd);
         long capsulesUnlocked = timeCapsuleRepository.countUnlockedInRange(userId, monthStart, monthEnd, now);
         long photosAdded = photoRepository.countByUserIdAndCreatedAtBetween(userId, monthStart, monthEnd);
-        List<RecapPhotoPreviewDto> recentPhotos = photoRepository
-                .findTop8ByUserIdAndCreatedAtBetweenOrderByCreatedAtDesc(userId, monthStart, monthEnd)
-                .stream()
+        List<Photo> topPhotos = photoRepository
+                .findTop8ByUserIdAndCreatedAtBetweenOrderByCreatedAtDesc(userId, monthStart, monthEnd);
+        List<RecapPhotoPreviewDto> recentPhotos = topPhotos.stream()
                 .map(this::toPreview)
                 .collect(Collectors.toList());
+        String collageUrl = CollageUrlBuilder.build(
+                cloudName,
+                topPhotos.stream().map(Photo::getPublicId).collect(Collectors.toList())
+        );
 
         StreakStats streakStats = calculateStreakStats(userId);
 
@@ -100,6 +109,7 @@ public class RecapServiceImpl implements RecapService {
                 capsulesUnlocked,
                 photosAdded,
                 recentPhotos,
+                collageUrl,
                 now
         );
     }

@@ -6,6 +6,8 @@ import com.divyam.advent.exception.ResourceNotFoundException;
 import com.divyam.advent.model.User;
 import com.divyam.advent.repository.UserRepository;
 import com.divyam.advent.service.UserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +16,8 @@ import java.util.Optional;
 
 @Service
 public class UserServiceImpl implements UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserServiceImpl.class);
 
     private final UserRepository userRepository;
 
@@ -36,6 +40,46 @@ public class UserServiceImpl implements UserService {
         }
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
+
+    @Override
+    public User setAdminRole(Long userId, boolean admin) {
+        User user = getUserById(userId);
+        user.setAdmin(admin);
+        return userRepository.save(user);
+    }
+
+    @Override
+    public User setBan(Long userId, String reason, java.time.LocalDateTime expiresAt) {
+        User user = getUserById(userId);
+        user.setBanned(true);
+        user.setBanReason(reason == null ? null : reason.trim().isEmpty() ? null : reason.trim());
+        user.setBanExpiresAt(expiresAt);
+        return userRepository.save(user);
+    }
+
+    @Override
+    public User clearBan(Long userId) {
+        User user = getUserById(userId);
+        user.setBanned(false);
+        user.setBanReason(null);
+        user.setBanExpiresAt(null);
+        return userRepository.save(user);
+    }
+
+    @Override
+    public User reconcileBan(User user) {
+        if (user == null || !user.isBanned()) {
+            return user;
+        }
+        java.time.LocalDateTime expiresAt = user.getBanExpiresAt();
+        if (expiresAt != null && !expiresAt.isAfter(java.time.LocalDateTime.now())) {
+            user.setBanned(false);
+            user.setBanReason(null);
+            user.setBanExpiresAt(null);
+            return userRepository.save(user);
+        }
+        return user;
     }
 
     @Override
@@ -132,8 +176,7 @@ public class UserServiceImpl implements UserService {
             try {
                 return changed ? userRepository.save(user) : user;
             } catch (DataAccessException e) {
-                System.err.println("Database error while updating user: " + e.getMessage());
-                e.printStackTrace();
+                log.error("Database error while updating user", e);
                 throw new IllegalStateException("Failed to update user: " + e.getMessage(), e);
             }
         }
@@ -166,8 +209,7 @@ public class UserServiceImpl implements UserService {
             try {
                 return userRepository.save(user);
             } catch (DataAccessException e) {
-                System.err.println("Database error while linking auth to existing user: " + e.getMessage());
-                e.printStackTrace();
+                log.error("Database error while linking auth to existing user", e);
                 throw new IllegalStateException("Failed to link auth to user: " + e.getMessage(), e);
             }
         }
@@ -185,8 +227,7 @@ public class UserServiceImpl implements UserService {
         try {
             return userRepository.save(user);
         } catch (DataAccessException e) {
-            System.err.println("Database error while creating new user: " + e.getMessage());
-            e.printStackTrace();
+            log.error("Database error while creating new user", e);
             throw new IllegalStateException("Failed to create user: " + e.getMessage(), e);
         }
     }

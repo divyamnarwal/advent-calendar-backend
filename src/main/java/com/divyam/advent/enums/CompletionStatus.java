@@ -12,5 +12,11 @@ public enum CompletionStatus {
     /**
      * User has successfully completed the challenge.
      */
-    COMPLETED
+    COMPLETED,
+
+    /**
+     * Deadline passed without completion. Final state — no retries. Counts as a
+     * loss against win rate and breaks the streak; ELO is untouched.
+     */
+    EXPIRED
 }
